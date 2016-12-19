@@ -1,0 +1,5 @@
+source https://www.nuget.org/api/v2
+
+github fsprojects/Chessie src/Chessie/ErrorHandling.fs
+nuget Newtonsoft.Json
+nuget Suave
