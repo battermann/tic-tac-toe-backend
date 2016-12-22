@@ -145,7 +145,6 @@ module Domain =
                     match evaluatedState with
                     | PlayerOToPlay _ -> [PlayerXPlayed pos]
                     | PlayerXWins _ -> [PlayerXPlayed pos; PlayerXWon]
-                    | Tie _ -> [PlayerXPlayed pos]
                     | _ -> []
                 return (gameId, version, events)
             }   
@@ -158,7 +157,7 @@ module Domain =
                     match evaluatedState with
                     | PlayerXToPlay _ -> [PlayerOPlayed pos]
                     | PlayerOWins _ -> [PlayerOPlayed pos; PlayerOWon]
-                    | Tie _ -> [PlayerXPlayed pos]
+                    | Tie _ -> [PlayerOPlayed pos; Tied]
                     | _ -> []
                 return (gameId, version, events)
             }                    
@@ -174,6 +173,5 @@ module Domain =
             fail "not your turn"
         | PlayerOToPlay grid, PlayX _ -> 
             fail "not your turn"
-        | _ -> 
-            fail "game is finished"
+        | _ -> fail "game is finished"
             
