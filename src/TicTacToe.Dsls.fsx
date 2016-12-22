@@ -9,8 +9,8 @@ type Continuation<'output, 'next> = 'output -> 'next
 
 module Domain =
     type Domain<'next> =
-    | Handle of (State * GameId * Command) * Continuation<VersionedEvents, 'next>
-    | Replay of Event list                 * Continuation<State, 'next>
+    | Handle of (State * Command) * Continuation<Version * Event list, 'next>
+    | Replay of Event list        * Continuation<State, 'next>
 
     let map f x =
         match x with

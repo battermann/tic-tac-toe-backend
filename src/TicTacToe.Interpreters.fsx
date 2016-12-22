@@ -54,8 +54,8 @@ module Domain =
 
     let interpret dsl: Effect<'a> =
         match dsl with
-        | Handle((state, id, cmd), cont) ->
-            Domain.handle state (id, cmd) |> Trial.lift cont |> Effects.ofResult
+        | Handle((state, cmd), cont) ->
+            Domain.handle state cmd |> Trial.lift cont |> Effects.ofResult
         | Replay(events, cont) ->
             Domain.replay events |> Trial.lift cont |> Effects.ofResult
 

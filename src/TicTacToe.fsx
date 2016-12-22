@@ -136,7 +136,7 @@ module Domain =
 
         events |> List.fold folder (ok (Version -1, Initial))
 
-    let handle (version: Version, game: Game) (gameId: GameId, cmd: Command): Result<VersionedEvents, Error> =
+    let handle (version: Version, game: Game) (cmd: Command): Result<Version * Event list, Error> =
         let xToPlayAndXPlays grid pos = 
             trial {
                 let! state = placeMarker grid PlayerX pos
@@ -146,7 +146,7 @@ module Domain =
                     | PlayerOToPlay _ -> [PlayerXPlayed pos]
                     | PlayerXWins _ -> [PlayerXPlayed pos; PlayerXWon]
                     | _ -> []
-                return (gameId, version, events)
+                return version, events
             }   
 
         let oToPlayAndOPlays grid pos = 
@@ -159,12 +159,12 @@ module Domain =
                     | PlayerOWins _ -> [PlayerOPlayed pos; PlayerOWon]
                     | Tie _ -> [PlayerOPlayed pos; Tied]
                     | _ -> []
-                return (gameId, version, events)
+                return version, events
             }                    
 
         match game, cmd with
         | Initial, Start -> 
-            ok (gameId, version, [Started])
+            ok (version, [Started])
         | PlayerXToPlay grid, PlayX pos ->
             xToPlayAndXPlays grid pos
         | PlayerOToPlay grid, PlayO pos -> 

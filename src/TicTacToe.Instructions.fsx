@@ -38,7 +38,7 @@ module Commands =
         free {
             let! events = EventStore.getStream id
             let! state = Domain.replay events
-            let! (id, v, newEvents) = Domain.handle (state, id, cmd)
+            let! (v, newEvents) = Domain.handle (state, cmd)
             do! EventStore.append (id, v, newEvents)
             do! EventBus.publish (id, newEvents) 
             return ()
