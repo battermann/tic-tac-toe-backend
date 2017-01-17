@@ -92,7 +92,7 @@ module Mappers =
     let toGameResponse url playerId closedForJoin (rm: Dsls.ReadModel.GameRm) =
         let urlPart =
             match playerId with
-            | Some pId -> sprintf "/player/%s" pId
+            | Some pId -> sprintf "/players/%s" pId
             | _        -> ""
         { GameResponse.id = rm.id
           grid = rm.grid
@@ -162,7 +162,7 @@ let start interpret (playerMap: Actor<PlayerMapMessage>) baseUrl: WebPart =
     do playerMap.Post(Add(GameId gameId, { x = PlayerId playerId |> Some; o = None }))
     // handle cmd asynchronously
     do interpret (Commands.handle(GameId gameId, Start)) |> Async.ofAsyncResult|> Async.map ignore |> Async.Start
-    ACCEPTED "" >=> Writers.setHeader "Location" (sprintf "%s/games/%s/player/%s" baseUrl (gameId.ToString()) (playerId.ToString()))
+    ACCEPTED "" >=> Writers.setHeader "Location" (sprintf "%s/games/%s/players/%s" baseUrl (gameId.ToString()) (playerId.ToString()))
 
 let join (playerMap: Actor<PlayerMapMessage>) (gameId: string) baseUrl: WebPart =
     let playerId = Guid.NewGuid()
@@ -171,7 +171,7 @@ let join (playerMap: Actor<PlayerMapMessage>) (gameId: string) baseUrl: WebPart 
             let! result = playerMap.PostAndAsyncReply(fun rc -> TryJoin (Guid(gameId) |> GameId, playerId |> PlayerId, rc))
             match result with
             | Ok _ ->
-                return! (ACCEPTED "" >=> Writers.setHeader "Location" (sprintf "%s/games/%s/player/%s" baseUrl (gameId.ToString()) (playerId.ToString()))) ctx
+                return! (ACCEPTED "" >=> Writers.setHeader "Location" (sprintf "%s/games/%s/players/%s" baseUrl (gameId.ToString()) (playerId.ToString()))) ctx
             | Bad errs ->
                 return! INTERNAL_ERROR (errs |> String.concat ", ") ctx
         }
@@ -201,7 +201,7 @@ let play interpret (playerMap: Actor<PlayerMapMessage>) (id: string) (playerId: 
                 let cmd = if (Guid(playerId) |> PlayerId) = plX then PlayX else PlayO
                 // handle cmd asyncronously
                 do interpret (Commands.handle(gameId, cmd (v, h))) |> Async.ofAsyncResult|> Async.map ignore |> Async.Start
-                return! (ACCEPTED "" >=> Writers.setHeader "Location" (sprintf "%s/games/%s/player/%s" baseUrl (id.ToString()) playerId)) ctx
+                return! (ACCEPTED "" >=> Writers.setHeader "Location" (sprintf "%s/games/%s/players/%s" baseUrl (id.ToString()) playerId)) ctx
             | Some _, Some _, false -> return! CONFLICT "opponent hasn't joined game yet" ctx
             | _, None, _            -> return! BAD_REQUEST "unknown position" ctx
             | _                     -> return! NOT_FOUND "unknown player id" ctx
@@ -268,7 +268,7 @@ let app =
             path "/games" >=> request (urlWithHost >> start interpret playersMapActor) >=> setHeaders
         ]
         PATCH >=> choose [
-            pathScan "/games/%s/player/%s" (fun (gameId, playerId) -> 
+            pathScan "/games/%s/players/%s" (fun (gameId, playerId) -> 
                 request (fun req -> play interpret playersMapActor gameId playerId (getResourceFromReq req) (urlWithHost req)))
                 >=> setHeaders
         ]

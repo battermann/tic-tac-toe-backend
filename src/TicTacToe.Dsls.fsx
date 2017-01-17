@@ -44,8 +44,10 @@ module ReadModel =
 
 module EventStore =
     type EventStore<'next> =
-    | GetStream of GameId                          * Continuation<Event list, 'next>
-    | Append    of (GameId * Version * Event list) * Continuation<unit, 'next>
+    | GetStream of GameId *
+                   Continuation<Event list, 'next>
+    | Append    of (GameId * Version * Event list) *
+                   Continuation<unit, 'next>
 
     let map f x =
         match x with
@@ -54,8 +56,6 @@ module EventStore =
 
 
 module EventBus = 
-    type HandleEvent = Event -> unit
-
     type EventBus<'next> =
     | Publish of (GameId * Event list) * Continuation<unit, 'next>
     let map f x =
