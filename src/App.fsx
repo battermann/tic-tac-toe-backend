@@ -241,31 +241,40 @@ let interpret free =
 
 let app =
     let setJsonHeader = Writers.setMimeType "application/json; charset=utf-8"
+
+    let setCorsHaeders = 
+        Writers.setHeader "Access-Control-Allow-Origin" "*" 
+        >=> Writers.setHeader "Access-Control-Allow-Headers" "content-type" 
+        >=> Writers.setHeader "Access-Control-Allow-Methods" "POST, GET, OPTIONS, DELETE, PATCH"
+
+    let setHeaders = setJsonHeader >=> setCorsHaeders
+
     choose [ 
         GET >=> choose [
             path "/" >=> request (urlWithHost >> fun url -> 
                 { Home.links = [{ rel = "games"; href = sprintf "%s/games" url }] } |> toJson |> OK) 
-                >=> setJsonHeader 
-            path "/games" >=> request (urlWithHost >> games interpret) >=> setJsonHeader
+                >=> setHeaders 
+            path "/games" >=> request (urlWithHost >> games interpret) >=> setHeaders
             pathScan "/games/%s/player/%s" (fun (gameId, playerId) -> 
-                request (urlWithHost >> game interpret playersMapActor gameId (Some playerId))) >=> setJsonHeader
+                request (urlWithHost >> game interpret playersMapActor gameId (Some playerId))) >=> setHeaders
             pathScan "/games/%s/join" (fun gameId -> 
                 request (urlWithHost >> fun url ->
-                    { Join.id = gameId; links = [ { rel = "self"; href = sprintf "%s/games/%s/join" url gameId } ] } |> toJson |> OK )) >=> setJsonHeader
+                    { Join.id = gameId; links = [ { rel = "self"; href = sprintf "%s/games/%s/join" url gameId } ] } |> toJson |> OK )) 
+                    >=> setHeaders
             pathScan "/games/%s" (fun gameId -> 
-                request (urlWithHost >> game interpret playersMapActor gameId None)) >=> setJsonHeader                                    
+                request (urlWithHost >> game interpret playersMapActor gameId None)) >=> setHeaders                                    
         ]
         POST >=> choose [
-            path "/games" >=> request (urlWithHost >> start interpret playersMapActor) >=> setJsonHeader
+            path "/games" >=> request (urlWithHost >> start interpret playersMapActor) >=> setHeaders
         ]
         PATCH >=> choose [
             pathScan "/games/%s/player/%s" (fun (gameId, playerId) -> 
                 request (fun req -> play interpret playersMapActor gameId playerId (getResourceFromReq req) (urlWithHost req)))
-                >=> setJsonHeader
+                >=> setHeaders
         ]
         PUT >=> choose [
             pathScan "/games/%s/join" (fun gameId ->
-                request (urlWithHost >> join playersMapActor gameId)) >=> setJsonHeader                              
+                request (urlWithHost >> join playersMapActor gameId)) >=> setHeaders                              
         ]
     ]
 
