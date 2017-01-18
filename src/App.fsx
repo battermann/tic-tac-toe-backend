@@ -1,8 +1,15 @@
+#r "../packages/FParsec/lib/net40-client/FParsec.dll"
+#r "../packages/FParsec/lib/net40-client/FParsecCS.dll"
+#r "../packages/Aether/lib/net35/Aether.dll"
+#r "../packages/Chiron/lib/net40/Chiron.dll"
+#r "System.Runtime.Serialization"
 #r @"../packages/Suave/lib/net40/Suave.dll"
 #r @"../packages/Newtonsoft.Json/lib/net45/Newtonsoft.Json.dll"
 #load @"TicTacToe.Interpreters.fsx"
 
 open System
+
+open Chiron
 
 open Suave.Web
 open Suave.Successful
@@ -59,16 +66,30 @@ module Responses =
         rel: string
         href: string
     }
+        with
+        static member ToJson (x:Link) = json {
+            do! Json.write "rel" x.rel
+            do! Json.write "href" x.href
+        }
 
     type ListItemResponse = {
         id: string
         status: string
         links: Link list
-    }
+    } 
+        with
+        static member ToJson (x:ListItemResponse) = json {
+            do! Json.write "id" x.id
+            do! Json.write "status" x.status
+        }
 
     type Home = {
         links: Link list
     }
+        //with
+        //static member ToJson (x:Home) = json {
+       //     do! Json.write "_links" (x.links |> List.map (fun (l: Link) -> Link.ToJson(l)))
+       // }    
 
     type GameResponse = {
         id: string
@@ -76,11 +97,20 @@ module Responses =
         status: string
         links: Link list
     }
+        with
+        static member ToJson (x:GameResponse) = json {
+            do! Json.write "id" x.id
+            do! Json.write "status" x.status
+        }    
 
     type Join = {
         id: string
         links: Link list
     }
+        with
+        static member ToJson (x:Join) = json {
+            do! Json.write "id" x.id
+        }    
 
 [<AutoOpen>]
 module Mappers =
@@ -152,7 +182,7 @@ let games interpret baseUrl: WebPart =
             let! rm = interpret (Queries.games) |> Async.ofAsyncResult
             return! 
                 match rm with
-                | Ok (v,_) -> OK (v |> List.map (fun rm -> toListItem baseUrl rm) |> toJson) ctx
+                | Ok (v,_) -> OK (v |> List.map (fun rm -> toListItem baseUrl rm) |> Json.serialize |> Json.formatWith JsonFormattingOptions.Compact) ctx
                 | Bad errs -> INTERNAL_ERROR (errs |> String.concat ", ") ctx
         }        
 

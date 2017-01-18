@@ -1,9 +1,8 @@
 module TicTacToe
 
-#load @"../paket-files/fsprojects/Chessie/src/Chessie/ErrorHandling.fs"
+#r @"../packages/Chessie/lib/net40/Chessie.dll"
 
 open System
-
 
 [<AutoOpen>]
 module Types =
