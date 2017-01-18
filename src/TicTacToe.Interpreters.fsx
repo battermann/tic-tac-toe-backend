@@ -1,6 +1,6 @@
 module TicTacToe.Interpreters
 
-#load @"TicTacToe.Instructions.fsx"
+#load "TicTacToe.Instructions.fsx"
 
 open TicTacToe
 open TicTacToe.Instructions

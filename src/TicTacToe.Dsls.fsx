@@ -1,6 +1,6 @@
 module TicTacToe.Dsls
 
-#load @"TicTacToe.fsx"
+#load "TicTacToe.fsx"
 
 open TicTacToe
 

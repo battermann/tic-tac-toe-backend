@@ -1,11 +1,12 @@
-#r "../packages/FParsec/lib/net40-client/FParsec.dll"
-#r "../packages/FParsec/lib/net40-client/FParsecCS.dll"
-#r "../packages/Aether/lib/net35/Aether.dll"
-#r "../packages/Chiron/lib/net40/Chiron.dll"
+#I "../packages"
+#r "FParsec/lib/net40-client/FParsec.dll"
+#r "FParsec/lib/net40-client/FParsecCS.dll"
+#r "Aether/lib/net35/Aether.dll"
+#r "Chiron/lib/net40/Chiron.dll"
 #r "System.Runtime.Serialization"
-#r @"../packages/Suave/lib/net40/Suave.dll"
-#r @"../packages/Newtonsoft.Json/lib/net45/Newtonsoft.Json.dll"
-#load @"TicTacToe.Interpreters.fsx"
+#r "Suave/lib/net40/Suave.dll"
+#r "Newtonsoft.Json/lib/net45/Newtonsoft.Json.dll"
+#load "TicTacToe.Interpreters.fsx"
 
 open System
 
@@ -86,10 +87,10 @@ module Responses =
     type Home = {
         links: Link list
     }
-        //with
-        //static member ToJson (x:Home) = json {
-       //     do! Json.write "_links" (x.links |> List.map (fun (l: Link) -> Link.ToJson(l)))
-       // }    
+        with
+        static member ToJson (x:Home) = json {
+            do! Json.write "_links" "todo"
+        }    
 
     type GameResponse = {
         id: string
@@ -151,11 +152,6 @@ module Serialization =
             Text.Encoding.UTF8.GetString(rawForm)
         req.rawForm |> getString |> fromJson<'a>
 
-    let toJson v =
-        let jsonSerializerSettings = new JsonSerializerSettings()
-        jsonSerializerSettings.ContractResolver <- new CamelCasePropertyNamesContractResolver()
-        JsonConvert.SerializeObject(v, jsonSerializerSettings)
-
 let bothPlayersJoined (playerMap: Actor<PlayerMapMessage>) gameId =
     async {
         let! players = playerMap.PostAndAsyncReply(fun rc -> TryFind (gameId, rc))
@@ -172,7 +168,7 @@ let game interpret (playerMap: Actor<PlayerMapMessage>) (id: string) playerId ba
             let! closedForJoin = bothPlayersJoined playerMap gameId
             return! 
                 match rm with
-                | Ok (v,_) -> OK (v |> toGameResponse baseUrl playerId closedForJoin |> toJson) ctx
+                | Ok (v,_) -> OK (v |> toGameResponse baseUrl playerId closedForJoin |> Json.serialize |> Json.formatWith JsonFormattingOptions.Compact) ctx
                 | Bad errs -> INTERNAL_ERROR (errs |> String.concat ", ") ctx
         }
 
@@ -282,14 +278,14 @@ let app =
     choose [ 
         GET >=> choose [
             path "/" >=> request (urlWithHost >> fun url -> 
-                { Home.links = [{ rel = "games"; href = sprintf "%s/games" url }] } |> toJson |> OK) 
+                { Home.links = [{ rel = "games"; href = sprintf "%s/games" url }] } |> Json.serialize |> Json.formatWith JsonFormattingOptions.Compact |> OK) 
                 >=> setHeaders 
             path "/games" >=> request (urlWithHost >> games interpret) >=> setHeaders
             pathScan "/games/%s/player/%s" (fun (gameId, playerId) -> 
                 request (urlWithHost >> game interpret playersMapActor gameId (Some playerId))) >=> setHeaders
             pathScan "/games/%s/join" (fun gameId -> 
                 request (urlWithHost >> fun url ->
-                    { Join.id = gameId; links = [ { rel = "self"; href = sprintf "%s/games/%s/join" url gameId } ] } |> toJson |> OK )) 
+                    { Join.id = gameId; links = [ { rel = "self"; href = sprintf "%s/games/%s/join" url gameId } ] } |> Json.serialize |> Json.formatWith JsonFormattingOptions.Compact |> OK )) 
                     >=> setHeaders
             pathScan "/games/%s" (fun gameId -> 
                 request (urlWithHost >> game interpret playersMapActor gameId None)) >=> setHeaders                                    
