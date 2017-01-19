@@ -6,6 +6,7 @@
 #r "System.Runtime.Serialization"
 #r "Suave/lib/net40/Suave.dll"
 #load "TicTacToe.Interpreters.fsx"
+#load "HalSharp.fsx"
 
 open System
 
@@ -24,6 +25,8 @@ open System
 open System.Net
 
 open Chessie.ErrorHandling
+
+open HalSharp
 
 open TicTacToe
 open Dsls.TicTacToeDsl
@@ -67,85 +70,44 @@ module Requests =
         }
 
 [<AutoOpen>]
-module Responses =
+module Serialization =
     let inline serializeList (list: 'a list) : Json =
         list |> List.map Json.serialize |> Json.serialize
-
-    type Link = {
-        rel: string
-        href: string
-    }
-        with
-        static member ToJson (x:Link) = json {
-            do! Json.write "rel" x.rel
-            do! Json.write "href" x.href
-        }
-
-    type Home = {
-        links: Link list
-    }
-        with
-        static member ToJson (x:Home) = json {
-            do! Json.writeWith serializeList "links" x.links
-        }    
-
-    type ListItemResponse = {
-        id: string
-        status: string
-        links: Link list
-    } 
-        with
-        static member ToJson (x:ListItemResponse) = json {
-            do! Json.write "id" x.id
-            do! Json.write "status" x.status
-            do! Json.writeWith serializeList "links" x.links
-        }
 
     let serializeGrid (grid: string list list) =
         grid |> List.map (serializeList >> Json.serialize) |> Json.serialize
 
-    type GameResponse = {
-        id: string
-        grid: string list list
-        status: string
-        links: Link list
-    }
-        with
-        static member ToJson (x:GameResponse) = json {
-            do! Json.write "id" x.id
-            do! Json.write "status" x.status
-            do! Json.writeWith serializeGrid "grid" x.grid
-            do! Json.writeWith serializeList "links" x.links
-        }    
-
-    type Join = {
-        id: string
-        links: Link list
-    }
-        with
-        static member ToJson (x:Join) = json {
-            do! Json.write "id" x.id
-            do! Json.writeWith serializeList "links" x.links
-        }    
-
 [<AutoOpen>]
 module Mappers =
-    let toListItem url (rm: Dsls.ReadModel.GameListItemRm) =
-        { ListItemResponse.id = rm.id
-          status = rm.status
-          links = [{ rel = "details"; href = sprintf "%s/games/%s" url rm.id }] }
+    let toGameList url (rms: (Dsls.ReadModel.GameListItemRm * bool) list) =
+        let toListItem (rm: Dsls.ReadModel.GameListItemRm, closed) = { 
+            Resource.links = Map.ofList [ yield "self", [ Link.simple (sprintf "%s/games/%s" url rm.id) ]
+                                          if not closed then yield (sprintf "%s/rels/join" url, [ Link.simple (sprintf "%s/games/%s/join" url rm.id) ]) ]
+            properties = Map.ofList [ "id", Chiron.String rm.id
+                                      "status", Chiron.String rm.status ]
+            embedded = Map.empty 
+        }    
+        { 
+            Resource.links = Map.ofList [ "self", [ Link.simple (sprintf "%s/games" url) ] ]
+            properties = Map.empty
+            embedded = Map.ofList [ sprintf "%s/rels/games" url, rms |> List.map toListItem ] 
+        }    
 
     let toGameResponse url playerId closedForJoin (rm: Dsls.ReadModel.GameRm) =
         let urlPart =
             match playerId with
             | Some pId -> sprintf "/players/%s" pId
             | _        -> ""
-        { GameResponse.id = rm.id
-          grid = rm.grid
-          status = rm.status
-          links = { rel = "self"; href = sprintf "%s/games/%s%s" url rm.id urlPart }
-                  :: if closedForJoin then []
-                     else [{ rel = "join"; href = sprintf "%s/games/%s/join" url rm.id }] }
+
+        { 
+            Resource.links = Map.ofList [ yield "self", [ Link.simple (sprintf "%s/games/%s%s" url rm.id urlPart) ]
+                                          yield "collection", [ Link.simple (sprintf "%s/games" url) ]
+                                          if not closedForJoin then yield (sprintf "%s/rels/join" url, [ Link.simple (sprintf "%s/games/%s/join" url rm.id) ])  ]
+            properties = Map.ofList [ "status", Chiron.String rm.status
+                                      "id", Chiron.String rm.id
+                                      "grid", serializeGrid rm.grid ]
+            embedded = Map.empty
+        }                         
 
 let urlWithHost (request : HttpRequest) = 
   let host = 
@@ -156,7 +118,6 @@ let urlWithHost (request : HttpRequest) =
 
 [<AutoOpen>]
 module Deserialization =
-       
     let getResourceFromReq<'a> (req : HttpRequest) =
         let getString rawForm = Text.Encoding.UTF8.GetString(rawForm)
         req.rawForm
@@ -180,19 +141,28 @@ let game interpret (playerMap: Actor<PlayerMapMessage>) (id: string) playerId ba
             let! closedForJoin = bothPlayersJoined playerMap gameId
             return! 
                 match rm with
-                | Ok (v,_) -> OK (v |> toGameResponse baseUrl playerId closedForJoin |> Json.serialize |> Json.format) ctx
+                | Ok (v,_) -> OK (v |> toGameResponse baseUrl playerId closedForJoin |> Resource.toJson |> Json.format) ctx
                 | Bad errs -> INTERNAL_ERROR (errs |> String.concat ", ") ctx
         }
 
-let games interpret baseUrl: WebPart =
+let gamesWithJoinableFlag (interpret: Free<_> -> Effect<_>) (playerMap: Actor<PlayerMapMessage>) =
+        asyncTrial {
+            let! games = interpret (Queries.games) 
+            let! gamesWithFlag = 
+                games |> List.map (fun (g: Dsls.ReadModel.GameListItemRm) -> bothPlayersJoined playerMap (Guid(g.id) |> GameId) |> Async.map (fun b -> g,b)) 
+                |> Async.Parallel
+            return gamesWithFlag |> Array.toList
+        }
+
+let games interpret (playerMap: Actor<PlayerMapMessage>) baseUrl: WebPart =
     fun (ctx: HttpContext) ->
         async {
-            let! rm = interpret (Queries.games) |> Async.ofAsyncResult
+            let! rmWithJoinableFlag = gamesWithJoinableFlag interpret playerMap |> Async.ofAsyncResult
             return! 
-                match rm with
-                | Ok (v,_) -> OK (v |> List.map (fun rm -> toListItem baseUrl rm) |> Json.serialize |> Json.format) ctx
+                match rmWithJoinableFlag with
+                | Ok (v,_) -> OK (v |> toGameList baseUrl |> Resource.toJson |> Json.format) ctx
                 | Bad errs -> INTERNAL_ERROR (errs |> String.concat ", ") ctx
-        }        
+        }   
 
 let start interpret (playerMap: Actor<PlayerMapMessage>) baseUrl: WebPart =
     let gameId = Guid.NewGuid()
@@ -278,7 +248,7 @@ let interpret free =
         ReadModel.interpret free
 
 let app =
-    let setJsonHeader = Writers.setMimeType "application/json; charset=utf-8"
+    let setJsonHeader = Writers.setMimeType "application/hal+json"
 
     let setCorsHaeders = 
         Writers.setHeader "Access-Control-Allow-Origin" "*" 
@@ -290,15 +260,13 @@ let app =
     choose [ 
         GET >=> choose [
             path "/" >=> request (urlWithHost >> fun url -> 
-                { Home.links = [{ rel = "games"; href = sprintf "%s/games" url }] } |> Json.serialize |> Json.format |> OK) 
+                { Resource.empty with links = Map.ofList [ "self", [ Link.simple "/" ]
+                                                           sprintf "%s/rels/games" url, [ Link.simple (sprintf "%s/games" url) ] ] }
+                |> Resource.toJson |> Json.format |> OK) 
                 >=> setHeaders 
-            path "/games" >=> request (urlWithHost >> games interpret) >=> setHeaders
+            path "/games" >=> request (urlWithHost >> games interpret playersMapActor) >=> setHeaders
             pathScan "/games/%s/player/%s" (fun (gameId, playerId) -> 
                 request (urlWithHost >> game interpret playersMapActor gameId (Some playerId))) >=> setHeaders
-            pathScan "/games/%s/join" (fun gameId -> 
-                request (urlWithHost >> fun url ->
-                    { Join.id = gameId; links = [ { rel = "self"; href = sprintf "%s/games/%s/join" url gameId } ] } |> Json.serialize |> Json.format |> OK )) 
-                    >=> setHeaders
             pathScan "/games/%s" (fun gameId -> 
                 request (urlWithHost >> game interpret playersMapActor gameId None)) >=> setHeaders                                    
         ]
