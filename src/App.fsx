@@ -5,7 +5,6 @@
 #r "Chiron/lib/net40/Chiron.dll"
 #r "System.Runtime.Serialization"
 #r "Suave/lib/net40/Suave.dll"
-#r "Newtonsoft.Json/lib/net45/Newtonsoft.Json.dll"
 #load "TicTacToe.Interpreters.fsx"
 
 open System
