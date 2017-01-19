@@ -1,7 +1,5 @@
 module HalSharp
 
-#load "../paket-files/include-scripts/net40/include.fparsec.fsx"
-#load "../paket-files/include-scripts/net40/include.aether.fsx"
 #load "../paket-files/include-scripts/net40/include.chiron.fsx"
 #r "System.Runtime.Serialization"
 
