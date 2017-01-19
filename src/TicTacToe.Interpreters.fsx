@@ -202,7 +202,7 @@ module ReadModel =
                     let! msg = inbox.Receive()
                     match msg with
                     | AddGame (GameId gameId, status) ->
-                        return! loop (games.Add(GameId gameId, { id = gameId.ToString(); grid = emptyGridRm; status = "" }), gameList)
+                        return! loop (games.Add(GameId gameId, { id = gameId.ToString(); grid = emptyGridRm; status = status }), gameList)
                     | UpdateGameStatus (gameId, status) ->
                         match games.TryFind gameId with
                         | Some ({ id = id; grid = grid; status = _ }) -> 

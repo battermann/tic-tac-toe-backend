@@ -60,9 +60,18 @@ module Requests =
         vertical: string
         horizontal: string
     }
+        with
+        static member FromJson (x:Play) = json {
+            let! v = Json.read "vertical"
+            let! h = Json.read "horizontal"
+            return { vertical = v; horizontal = h }
+        }
 
 [<AutoOpen>]
 module Responses =
+    let inline serializeList (list: 'a list) : Json =
+        list |> List.map Json.serialize |> Json.serialize
+
     type Link = {
         rel: string
         href: string
@@ -73,6 +82,14 @@ module Responses =
             do! Json.write "href" x.href
         }
 
+    type Home = {
+        links: Link list
+    }
+        with
+        static member ToJson (x:Home) = json {
+            do! Json.writeWith serializeList "links" x.links
+        }    
+
     type ListItemResponse = {
         id: string
         status: string
@@ -82,15 +99,11 @@ module Responses =
         static member ToJson (x:ListItemResponse) = json {
             do! Json.write "id" x.id
             do! Json.write "status" x.status
+            do! Json.writeWith serializeList "links" x.links
         }
 
-    type Home = {
-        links: Link list
-    }
-        with
-        static member ToJson (x:Home) = json {
-            do! Json.write "_links" "todo"
-        }    
+    let serializeGrid (grid: string list list) =
+        grid |> List.map (serializeList >> Json.serialize) |> Json.serialize
 
     type GameResponse = {
         id: string
@@ -102,6 +115,8 @@ module Responses =
         static member ToJson (x:GameResponse) = json {
             do! Json.write "id" x.id
             do! Json.write "status" x.status
+            do! Json.writeWith serializeGrid "grid" x.grid
+            do! Json.writeWith serializeList "links" x.links
         }    
 
     type Join = {
@@ -111,6 +126,7 @@ module Responses =
         with
         static member ToJson (x:Join) = json {
             do! Json.write "id" x.id
+            do! Json.writeWith serializeList "links" x.links
         }    
 
 [<AutoOpen>]
@@ -140,18 +156,15 @@ let urlWithHost (request : HttpRequest) =
   sprintf "%s://%s" request.url.Scheme host
 
 [<AutoOpen>]
-module Serialization =
-    open Newtonsoft.Json
-    open Newtonsoft.Json.Serialization
-
-    let fromJson<'a> json =
-        JsonConvert.DeserializeObject(json, typeof<'a>) :?> 'a
-
+module Deserialization =
+       
     let getResourceFromReq<'a> (req : HttpRequest) =
-        let getString rawForm =
-            Text.Encoding.UTF8.GetString(rawForm)
-        req.rawForm |> getString |> fromJson<'a>
-
+        let getString rawForm = Text.Encoding.UTF8.GetString(rawForm)
+        req.rawForm
+        |> getString
+        |> Json.parse
+        |> Json.deserialize
+        
 let bothPlayersJoined (playerMap: Actor<PlayerMapMessage>) gameId =
     async {
         let! players = playerMap.PostAndAsyncReply(fun rc -> TryFind (gameId, rc))
@@ -168,7 +181,7 @@ let game interpret (playerMap: Actor<PlayerMapMessage>) (id: string) playerId ba
             let! closedForJoin = bothPlayersJoined playerMap gameId
             return! 
                 match rm with
-                | Ok (v,_) -> OK (v |> toGameResponse baseUrl playerId closedForJoin |> Json.serialize |> Json.formatWith JsonFormattingOptions.Compact) ctx
+                | Ok (v,_) -> OK (v |> toGameResponse baseUrl playerId closedForJoin |> Json.serialize |> Json.format) ctx
                 | Bad errs -> INTERNAL_ERROR (errs |> String.concat ", ") ctx
         }
 
@@ -178,7 +191,7 @@ let games interpret baseUrl: WebPart =
             let! rm = interpret (Queries.games) |> Async.ofAsyncResult
             return! 
                 match rm with
-                | Ok (v,_) -> OK (v |> List.map (fun rm -> toListItem baseUrl rm) |> Json.serialize |> Json.formatWith JsonFormattingOptions.Compact) ctx
+                | Ok (v,_) -> OK (v |> List.map (fun rm -> toListItem baseUrl rm) |> Json.serialize |> Json.format) ctx
                 | Bad errs -> INTERNAL_ERROR (errs |> String.concat ", ") ctx
         }        
 
@@ -278,14 +291,14 @@ let app =
     choose [ 
         GET >=> choose [
             path "/" >=> request (urlWithHost >> fun url -> 
-                { Home.links = [{ rel = "games"; href = sprintf "%s/games" url }] } |> Json.serialize |> Json.formatWith JsonFormattingOptions.Compact |> OK) 
+                { Home.links = [{ rel = "games"; href = sprintf "%s/games" url }] } |> Json.serialize |> Json.format |> OK) 
                 >=> setHeaders 
             path "/games" >=> request (urlWithHost >> games interpret) >=> setHeaders
             pathScan "/games/%s/player/%s" (fun (gameId, playerId) -> 
                 request (urlWithHost >> game interpret playersMapActor gameId (Some playerId))) >=> setHeaders
             pathScan "/games/%s/join" (fun gameId -> 
                 request (urlWithHost >> fun url ->
-                    { Join.id = gameId; links = [ { rel = "self"; href = sprintf "%s/games/%s/join" url gameId } ] } |> Json.serialize |> Json.formatWith JsonFormattingOptions.Compact |> OK )) 
+                    { Join.id = gameId; links = [ { rel = "self"; href = sprintf "%s/games/%s/join" url gameId } ] } |> Json.serialize |> Json.format |> OK )) 
                     >=> setHeaders
             pathScan "/games/%s" (fun gameId -> 
                 request (urlWithHost >> game interpret playersMapActor gameId None)) >=> setHeaders                                    
