@@ -1,15 +1,10 @@
-#I "../packages"
-#r "FParsec/lib/net40-client/FParsec.dll"
-#r "FParsec/lib/net40-client/FParsecCS.dll"
-#r "Aether/lib/net35/Aether.dll"
-#r "Chiron/lib/net40/Chiron.dll"
-#r "System.Runtime.Serialization"
-#r "Suave/lib/net40/Suave.dll"
-#r "Suave.DotLiquid/lib/net40/Suave.DotLiquid.dll"
-#r "DotLiquid/lib/net451/DotLiquid.dll"
 #load "TicTacToe.Interpreters.fsx"
 #load "HalSharp.fsx"
 #load "ApiDocs.fsx"
+#I "../packages"
+#r "Suave/lib/net40/Suave.dll"
+#r "DotLiquid/lib/net451/DotLiquid.dll"
+#r "Suave.DotLiquid/lib/net40/Suave.DotLiquid.dll"
 
 open System
 open System.Net
@@ -157,7 +152,7 @@ let game interpret (playerMap: Actor<PlayerMapMessage>) (id: string) baseUrl: We
             return! 
                 match rm with
                 | Ok (v,_) -> 
-                    OK (v |> toGameResponse baseUrl closedForJoin |> Resource.toJson |> Json.format) ctx
+                    OK (v |> toGameResponse baseUrl closedForJoin |> HalResource.toJson |> Json.format) ctx
                 | Bad errs -> 
                     INTERNAL_ERROR ({ error = (errs |> String.concat ", ") } |> Json.serialize |> Json.format) ctx
         }
@@ -178,7 +173,7 @@ let games interpret (playerMap: Actor<PlayerMapMessage>) baseUrl: WebPart =
             return! 
                 match rmWithJoinableFlag with
                 | Ok (v,_) -> 
-                    OK (v |> toGameList baseUrl |> Resource.toJson |> Json.format) ctx
+                    OK (v |> toGameList baseUrl |> HalResource.toJson |> Json.format) ctx
                 | Bad errs ->
                     INTERNAL_ERROR ({ error = (errs |> String.concat ", ") } |> Json.serialize |> Json.format) ctx
         }   
@@ -297,9 +292,9 @@ let app =
     choose [ 
         GET >=> choose [
             path "/" >=> request (urlWithHost >> fun url -> 
-                { Resource.empty with links = Map.ofList [ "self", [ Link.simple "/" ]
-                                                           gamesRel url, [ Link.simple (sprintf "%s/games" url) ] ] }
-                |> Resource.toJson |> Json.format |> OK) 
+                { HalResource.empty with links = Map.ofList [ "self", [ Link.simple "/" ]
+                                                              gamesRel url, [ Link.simple (sprintf "%s/games" url) ] ] }
+                |> HalResource.toJson |> Json.format |> OK) 
                 >=> setHeaders
             path "/games" >=> request (urlWithHost >> games interpret playersMapActor) >=> setHeaders
             pathScan "/games/%s" (fun gameId -> 
@@ -324,8 +319,8 @@ let config =
     let ip = IPAddress.Parse "0.0.0.0"
     let [|_; port|] = fsi.CommandLineArgs
     { defaultConfig with
-        logger = Logging.Loggers.saneDefaultsFor Logging.LogLevel.Info
-        bindings=[ HttpBinding.mk HTTP ip (uint16 port) ] }
+        //logger = Logging.LoggerEx   .saneDefaultsFor Logging.LogLevel.Info
+        bindings= [ HttpBinding.create HTTP ip (uint16 port) ] }
 
 interpret (ReadModel.subscribe())
 

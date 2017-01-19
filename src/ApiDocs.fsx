@@ -2,7 +2,7 @@ module ApiDocs
 
 type Request = {
     url: string
-    method: string
+    httpMethod: string
     urlParams: string
     contentType: string
     dataParams: string
@@ -30,7 +30,7 @@ let join = {
     request = 
         {
             url = "/games/{id}/join"
-            method = "POST"
+            httpMethod = "POST"
             urlParams = "none"
             contentType = "any"
             dataParams = "none"
@@ -56,7 +56,7 @@ let games = {
     request = 
         {
             url = "/games"
-            method = "GET"
+            httpMethod = "GET"
             urlParams = "none"
             contentType = "any"
             dataParams = "none"
@@ -115,7 +115,7 @@ let newGame = {
     request = 
         {
             url = "/games"
-            method = "POST"
+            httpMethod = "POST"
             urlParams = "none"
             contentType = "any"
             dataParams = "none"
@@ -141,7 +141,7 @@ let play = {
     request = 
         {
             url = "/games/{id}/moves"
-            method = "POST"
+            httpMethod = "POST"
             urlParams = "none"
             contentType = "application/json"
             dataParams = "vertical : string, horizontal : string, playerId : string"

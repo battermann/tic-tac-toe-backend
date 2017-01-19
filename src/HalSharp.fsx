@@ -1,10 +1,8 @@
 module HalSharp
 
-#I "../packages"
-#r "FParsec/lib/net40-client/FParsec.dll"
-#r "FParsec/lib/net40-client/FParsecCS.dll"
-#r "Aether/lib/net35/Aether.dll"
-#r "Chiron/lib/net40/Chiron.dll"
+#load "../paket-files/include-scripts/net40/include.fparsec.fsx"
+#load "../paket-files/include-scripts/net40/include.aether.fsx"
+#load "../paket-files/include-scripts/net40/include.chiron.fsx"
 #r "System.Runtime.Serialization"
 
 open System
@@ -28,6 +26,7 @@ type Resource = {
 }
 
 [<RequireQualifiedAccess>]
+[<CompilationRepresentation (CompilationRepresentationFlags.ModuleSuffix)>]
 module internal Link =
     let simple href = {
         href = href
@@ -68,7 +67,7 @@ module internal Link =
             |> Some
 
 [<RequireQualifiedAccess>]
-module Resource =
+module HalResource =
     let empty = {
         links = Map.empty
         embedded = Map.empty
