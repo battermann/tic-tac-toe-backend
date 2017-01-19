@@ -8,6 +8,7 @@ NUGET
     Chiron (6.2.1)
       Aether (>= 8.0.2 < 9.0)
       FParsec (>= 1.0 < 2.0)
+    DotLiquid (2.0.64)
     FParsec (1.0.2)
     FSharp.Core (4.0.1.7-alpha)
       Microsoft.NETCore.Platforms (>= 1.0.1) - framework: >= net463, >= netstandard16
@@ -107,6 +108,10 @@ NUGET
     runtime.ubuntu.16.10-x64.runtime.native.System.Security.Cryptography.OpenSsl (4.3) - framework: >= net463, >= netstandard16
     Suave (1.1.3)
       FSharp.Core (>= 3.1.2.5)
+    Suave.DotLiquid (1.1.3)
+      DotLiquid (>= 1.8)
+      FSharp.Core (>= 3.1.2.5)
+      Suave (>= 1.1.3)
     System.AppContext (4.3) - framework: >= net463, >= netstandard16
       System.Runtime (>= 4.3) - framework: dnxcore50, netstandard13, >= netstandard16
     System.Buffers (4.3) - framework: >= net463, >= netstandard16

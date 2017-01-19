@@ -1,0 +1,32 @@
+<html>
+  <head>
+    <title>{{ model.title }}</title>
+  </head>
+  <body>
+    <h1>{{ model.title }}</h1>
+        <p>{{ model.description }}</p>
+        <h2>URL</h2>
+        <p><pre><code>{{ model.request.url }}</code></pre></p>
+        <h2>Request</h2>
+            <h3>Method</h3>
+            <p><pre><code>{{ model.request.method }}</code></pre></p>  
+            <h3>URL parameters</h3>
+            <p><pre><code>{{ model.request.url_params }}</code></pre></p>  
+            <h3>Content Type</h3>
+            <p><pre><code>{{ model.request.content_type }}</code></pre></p>   
+            <h3>Data parameters</h3>
+            <p><pre><code>{{ model.request.data_params }}</code></pre></p>      
+            <h3>Example</h3>
+            <p><pre><code>{{ model.request.example }}</code></pre></p>                             
+        <h2>Response</h2>
+            <p>{{ model.response.description }}</p>
+            <h3>Response code</h3>
+            <p><pre><code>{{ model.success }}</code></pre></p>
+            <h3>Content Type</h3>
+            <p><pre><code>{{ model.response.content_type }}</code></pre></p>
+            <h3>Example</h3>
+            <p><pre><code>{{ model.response.example }}</code></pre></p>                          
+        <h2>Errors</h2>
+        <p><pre><code>{{ model.error }}</code></pre></p>
+  </body>
+</html>

@@ -3,3 +3,5 @@ source https://www.nuget.org/api/v2
 nuget Chessie
 nuget Suave
 nuget Chiron
+nuget DotLiquid
+nuget Suave.DotLiquid
