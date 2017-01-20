@@ -1,7 +1,7 @@
 source http://nuget.org/api/v2
 framework: >= net40
-nuget Chessie
-nuget Suave
-nuget Chiron
-nuget DotLiquid
-nuget Suave.DotLiquid
+nuget Chessie = 0.6.0
+nuget Suave = 2.0.2
+nuget Chiron = 6.2.1
+nuget DotLiquid = 2.0.64
+nuget Suave.DotLiquid = 2.0.2
