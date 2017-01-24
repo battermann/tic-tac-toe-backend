@@ -1,6 +1,5 @@
 #load "TicTacToe.Interpreters.fsx"
 #load "Hal.fsx"
-#load "ApiDocs.fsx"
 #I "../packages"
 #r "Suave/lib/net40/Suave.dll"
 
