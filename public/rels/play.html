@@ -1,0 +1,36 @@
+<html>
+  <head>
+    <title>Make a play</title>
+  </head>
+  <body>
+    <h1>Make a play</h1>
+        <p>This is the relation for making a play. The request has to provide the player ID and a description of the move in the request body. The move has a vertical and a horizontal position. Valid vertical positions are: "top", "vcenter", "bottom". Valid horizontal positions are: "left", "hcenter", "right".</p>
+        <h2>URL</h2>
+        <p><pre><code>/games/{id}/moves</code></pre></p>
+        <h2>Request</h2>
+            <h3>Method</h3>
+            <p><pre><code></code></pre></p>  
+            <h3>URL parameters</h3>
+            <p><pre><code>none</code></pre></p>  
+            <h3>Content Type</h3>
+            <p><pre><code>application/json</code></pre></p>   
+            <h3>Data parameters</h3>
+            <p><pre><code>vertical : string, horizontal : string, playerId : string</code></pre></p>      
+            <h3>Example</h3>
+            <p><pre><code>{
+    "vertical": "top",
+    "horizontal": "left",
+    "playerId": "47769197-0ca6-414c-a018-610896eb645b"
+}</code></pre></p>                             
+        <h2>Response</h2>
+            <p>The request will be processed asynchronously. Therefore the response is empty. To get the current state of the game a new request to the game URL has to made.</p>
+            <h3>Response code</h3>
+            <p><pre><code>202 Accpeted</code></pre></p>
+            <h3>Content Type</h3>
+            <p><pre><code></code></pre></p>
+            <h3>Example</h3>
+            <p><pre><code></code></pre></p>                          
+        <h2>Errors</h2>
+        <p><pre><code>409 Conflict, 404 Not Found, 400 Bad Request</code></pre></p>
+  </body>
+</html>

@@ -1,0 +1,36 @@
+<html>
+  <head>
+    <title>Join a new game</title>
+  </head>
+  <body>
+    <h1>Join a new game</h1>
+        <p>Join a game that has been started by someone else. The player that joins will be player O. Games can only be joined if no one else has joined them before.</p>
+        <h2>URL</h2>
+        <p><pre><code>/games/{id}/join</code></pre></p>
+        <h2>Request</h2>
+            <h3>Method</h3>
+            <p><pre><code></code></pre></p>  
+            <h3>URL parameters</h3>
+            <p><pre><code>none</code></pre></p>  
+            <h3>Content Type</h3>
+            <p><pre><code>any</code></pre></p>   
+            <h3>Data parameters</h3>
+            <p><pre><code>none</code></pre></p>      
+            <h3>Example</h3>
+            <p><pre><code></code></pre></p>                             
+        <h2>Response</h2>
+            <p>The response contains the player ID for player O. In subsequent request on the game (to make plays) this ID has to be transmitted in the request body. The URL of the game can be found in the Location Header.</p>
+            <h3>Response code</h3>
+            <p><pre><code>202 Accpeted</code></pre></p>
+            <h3>Content Type</h3>
+            <p><pre><code>application/hal+json</code></pre></p>
+            <h3>Example</h3>
+            <p><pre><code>Location http://localhost:8000/games/94a26c4a-75f7-45b2-8e20-a39f0f8818e8
+
+{ 
+    "playerId": "6acd905b-044e-47f8-9692-4b68d0c6ee07" 
+}</code></pre></p>                          
+        <h2>Errors</h2>
+        <p><pre><code>409 Conflict, 404 Not Found, 500 Internal Server Error</code></pre></p>
+  </body>
+</html>

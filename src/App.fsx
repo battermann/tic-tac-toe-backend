@@ -1,15 +1,13 @@
 #load "TicTacToe.Interpreters.fsx"
-#load "HalSharp.fsx"
+#load "Hal.fsx"
 #load "ApiDocs.fsx"
 #I "../packages"
 #r "Suave/lib/net40/Suave.dll"
-#r "DotLiquid/lib/net451/DotLiquid.dll"
-#r "Suave.DotLiquid/lib/net40/Suave.DotLiquid.dll"
 
 open System
 open System.Net
 
-open Chiron
+open FSharp.Data
 
 open Suave.Web
 open Suave.Successful
@@ -20,12 +18,11 @@ open System.IO
 open Suave
 open Suave.Filters
 open Suave.RequestErrors
-open Suave.DotLiquid
-open DotLiquid
 
 open Chessie.ErrorHandling
 
-open HalSharp
+open Hal
+open FSharpDataIntepreter
 
 open TicTacToe
 open Dsls.TicTacToeDsl
@@ -35,10 +32,33 @@ open Types
 open Interpreters
 open Effects
 
-let gamesRel url = sprintf "%s/rels/games" url
-let joinRel url = sprintf "%s/rels/join" url
-let playRel url = sprintf "%s/rels/play" url
-let newGameRel url = sprintf "%s/rels/newgame" url        
+let (</>) path1 path2 = Path.Combine(path1, path2)
+
+let GAMES = "games"
+let GAME = "game"
+let MOVES = "moves"
+let JOIN = "join"
+let PLAY = "play"
+let NEWGAME = "newgame"
+
+
+module Paths =
+    let api = "api"
+    let games = api </> GAMES
+    let game id = (api </> GAMES) </> id
+    let moves id = game id </> MOVES
+    let join id = game id </> JOIN
+    let rels = sprintf "docs/rels/%s"
+
+module Routes =
+    let game = new PrintfFormat<(string -> string),unit,string,string,string>(("/" </> Paths.games) </> "%s")
+    let moves = new PrintfFormat<(string -> string),unit,string,string,string>((("/" </> Paths.games) </> "%s") </> MOVES)
+    let join = new PrintfFormat<(string -> string),unit,string,string,string>((("/" </> Paths.games) </> "%s") </> JOIN)
+  
+let gamesRel host = host </> ("games" |> Paths.rels)
+let joinRel host = host </> ("join" |> Paths.rels)
+let playRel host = host </> ("play" |> Paths.rels)
+let newGameRel host = host </> ("newgame" |> Paths.rels)
 
 type PlayerId = PlayerId of Guid
 
@@ -58,82 +78,88 @@ module Responses =
         error: string
     }
         with
-        static member ToJson (x:Error) = json {
-            do! Json.write "error" x.error
-        }     
+        static member ToJson (x:Error) =
+            JsonValue.Record [| "error", JsonValue.String(x.error) |]
+
 
 [<AutoOpen>]
 module Requests =
+    let findString s arr = arr |> Array.find (fun (k,v) -> k = s) |> snd |> fun v -> v.ToString()
+
     type Play = {
         vertical: string
         horizontal: string
         playerId: string
     }
         with
-        static member FromJson (x:Play) = json {
-            let! v = Json.read "vertical"
-            let! h = Json.read "horizontal"
-            let! id = Json.read "playerId"
-            return { vertical = v; horizontal = h; playerId = id }
-        }
+        static member FromJson (x:JsonValue) =
+            match x with
+            | JsonValue.Record props ->
+                { vertical = props |> findString "vertical"
+                  horizontal = props |> findString "horizontal"
+                  playerId = props |> findString "playerId" }
+            | _ -> failwith "bad format"
 
     type Player = {
         playerId: string
     }
         with
-        static member FromJson (x:Player) = json {
-            let! id = Json.read "playerId"
-            return { playerId = id }
-        } 
-        static member ToJson (x:Player) = json {
-            do! Json.write "playerId" x.playerId
-        }                      
+        static member FromJson (x:JsonValue) = 
+            match x with
+            | JsonValue.Record props ->
+                  { playerId = props |> findString "playerId" }
+            | _ -> failwith "bad format"
+
+        static member ToJson (x:Player) =
+            JsonValue.Record [| "playerId", JsonValue.String(x.playerId) |]
 
 [<AutoOpen>]
 module Serialization =
-    let inline serializeList (list: 'a list) : Json =
-        list |> List.map Json.serialize |> Json.serialize
+    let serializeList (list: string list) : JsonValue =
+        list |> List.map JsonValue.String |> List.toArray |> JsonValue.Array
 
-    let serializeGrid (grid: string list list) =
-        grid |> List.map (serializeList >> Json.serialize) |> Json.serialize
+    let serializeGrid (grid: string list list) : JsonValue =
+        grid |> List.map serializeList |> List.toArray |> JsonValue.Array
 
 [<AutoOpen>]
 module Mappers =
+    let jsonToString (json: JsonValue) = json.ToString(JsonSaveOptions.DisableFormatting)
+
     let toGameList url (rms: (Dsls.ReadModel.GameListItemRm * bool) list) =
         let toListItem (rm: Dsls.ReadModel.GameListItemRm, closed) = { 
-            Resource.links = Map.ofList [ yield "self", [ Link.simple (sprintf "%s/games/%s" url rm.id) ]
-                                          if not closed then yield (joinRel url, [ Link.simple (sprintf "%s/games/%s/join" url rm.id) ]) ]
-            properties = Map.ofList [ "id", Chiron.String rm.id
-                                      "status", Chiron.String rm.status ]
+            Resource.links = Map.ofList [ yield "self", [ Link.simple (url </> Paths.game rm.id) ]
+                                          if not closed then yield (joinRel url, [ Link.simple (url </> Paths.join rm.id) ]) ]
+            properties = Map.ofList [ "id", Hal.Pure <| JsonValue.String(rm.id)
+                                      "status", Hal.Pure <| JsonValue.String(rm.status) ]
             embedded = Map.empty 
         }    
         { 
-            Resource.links = Map.ofList [ "self", [ Link.simple (sprintf "%s/games" url) ]
-                                          newGameRel url, [ Link.simple (sprintf "%s/games" url) ] ]
+            Resource.links = Map.ofList [ "self", [ Link.simple (url </> Paths.games) ]
+                                          newGameRel url, [ Link.simple (url </> Paths.games) ] ]
             properties = Map.empty
             embedded = Map.ofList [ gamesRel url, rms |> List.map toListItem ] 
         }    
 
     let toGameResponse url closedForJoin (rm: Dsls.ReadModel.GameRm) =
         { 
-            Resource.links = Map.ofList [ yield "self", [ Link.simple (sprintf "%s/games/%s" url rm.id) ]
-                                          yield "collection", [ Link.simple (sprintf "%s/games" url) ]
-                                          yield playRel url, [ Link.simple (sprintf "%s/games/%s/moves" url rm.id) ]
-                                          if not closedForJoin then yield (joinRel url, [ Link.simple (sprintf "%s/games/%s/join" url rm.id) ])  ]
-            properties = Map.ofList [ "status", Chiron.String rm.status
-                                      "id", Chiron.String rm.id
-                                      "grid", serializeGrid rm.grid ]
+            Resource.links = Map.ofList [ yield "self", [ Link.simple (url </> Paths.game rm.id) ]
+                                          yield "collection", [ Link.simple (url </> Paths.games) ]
+                                          yield playRel url, [ Link.simple (url </> Paths.moves rm.id) ]
+                                          if not closedForJoin then yield (joinRel url, [ Link.simple (url </> Paths.join rm.id) ])  ]
+            properties = Map.ofList [ "status", Hal.Pure <| JsonValue.String(rm.status)
+                                      "id", Hal.Pure <| JsonValue.String(rm.id)
+                                      "grid", Hal.Pure <| serializeGrid rm.grid]
             embedded = Map.empty
         }
 
 [<AutoOpen>]
 module Deserialization =
-    let getResourceFromReq<'a> (req : HttpRequest) =
+    let getPlay (req : HttpRequest) =
         let getString rawForm = Text.Encoding.UTF8.GetString(rawForm)
         req.rawForm
         |> getString
-        |> Json.parse
-        |> Json.deserialize
+        |> JsonValue.Parse
+        |> Play.FromJson
         
 let bothPlayersJoined (playerMap: Actor<PlayerMapMessage>) gameId =
     async {
@@ -152,9 +178,9 @@ let game interpret (playerMap: Actor<PlayerMapMessage>) (id: string) baseUrl: We
             return! 
                 match rm with
                 | Ok (v,_) -> 
-                    OK (v |> toGameResponse baseUrl closedForJoin |> HalResource.toJson |> Json.format) ctx
+                    OK (v |> toGameResponse baseUrl closedForJoin |> Resource.toJson jsonInterpreter |> jsonToString) ctx
                 | Bad errs -> 
-                    INTERNAL_ERROR ({ error = (errs |> String.concat ", ") } |> Json.serialize |> Json.format) ctx
+                    INTERNAL_ERROR ({ error = (errs |> String.concat ", ") } |> (Error.ToJson >> jsonToString)) ctx
         }
 
 let gamesWithJoinableFlag (interpret: Free<_> -> Effect<_>) (playerMap: Actor<PlayerMapMessage>) =
@@ -173,9 +199,9 @@ let games interpret (playerMap: Actor<PlayerMapMessage>) baseUrl: WebPart =
             return! 
                 match rmWithJoinableFlag with
                 | Ok (v,_) -> 
-                    OK (v |> toGameList baseUrl |> HalResource.toJson |> Json.format) ctx
+                    OK (v |> toGameList baseUrl |> Resource.toJson jsonInterpreter |> jsonToString) ctx
                 | Bad errs ->
-                    INTERNAL_ERROR ({ error = (errs |> String.concat ", ") } |> Json.serialize |> Json.format) ctx
+                    INTERNAL_ERROR ({ error = (errs |> String.concat ", ") } |> Error.ToJson |> jsonToString) ctx
         }   
 
 let start interpret (playerMap: Actor<PlayerMapMessage>) baseUrl: WebPart =
@@ -184,8 +210,8 @@ let start interpret (playerMap: Actor<PlayerMapMessage>) baseUrl: WebPart =
     do playerMap.Post(Add(GameId gameId, { x = PlayerId playerId |> Some; o = None }))
     // handle cmd asynchronously
     do interpret (Commands.handle(GameId gameId, Start)) |> Async.ofAsyncResult|> Async.map ignore |> Async.Start
-    let body = { playerId = playerId.ToString() } |> Json.serialize |> Json.format
-    ACCEPTED body >=> Writers.setHeader "Location" (sprintf "%s/games/%s" baseUrl (gameId.ToString()))
+    let body = { playerId = playerId.ToString() } |> Player.ToJson |> jsonToString
+    ACCEPTED body >=> Writers.setHeader "Location" (baseUrl </> Paths.game (gameId.ToString()))
 
 let join (playerMap: Actor<PlayerMapMessage>) (gameId: string) baseUrl: WebPart =
     let playerId = Guid.NewGuid()
@@ -194,16 +220,16 @@ let join (playerMap: Actor<PlayerMapMessage>) (gameId: string) baseUrl: WebPart 
             let! result = playerMap.PostAndAsyncReply(fun rc -> TryJoin (Guid(gameId) |> GameId, playerId |> PlayerId, rc))
             match result with
             | Ok _ ->
-                let body = { playerId = playerId.ToString() } |> Json.serialize |> Json.format
-                return! (ACCEPTED body >=> Writers.setHeader "Location" (sprintf "%s/games/%s" baseUrl (gameId.ToString()))) ctx
+                let body = { playerId = playerId.ToString() } |> Player.ToJson |> jsonToString
+                return! (ACCEPTED body >=> Writers.setHeader "Location" (baseUrl </> Paths.game (gameId.ToString()))) ctx
             | Bad errs ->
                 return!
                     if errs |> List.exists ((=) "game already running") then
-                        CONFLICT ({ error = (errs |> String.concat ", ") } |> Json.serialize |> Json.format) ctx
+                        CONFLICT ({ error = (errs |> String.concat ", ") } |> Error.ToJson |> jsonToString) ctx
                     elif errs |> List.exists ((=) "game invalid") then
-                        NOT_FOUND ({ error = (errs |> String.concat ", ") } |> Json.serialize |> Json.format) ctx
+                        NOT_FOUND ({ error = (errs |> String.concat ", ") } |> Error.ToJson |> jsonToString) ctx
                     else 
-                        INTERNAL_ERROR ({ error = (errs |> String.concat ", ")} |> Json.serialize |> Json.format) ctx
+                        INTERNAL_ERROR ({ error = (errs |> String.concat ", ")} |> Error.ToJson |> jsonToString) ctx
                         
         }
 
@@ -232,10 +258,10 @@ let play interpret (playerMap: Actor<PlayerMapMessage>) (id: string) (play:Play)
                 let cmd = if (Guid(play.playerId) |> PlayerId) = plX then PlayX else PlayO
                 // handle cmd asyncronously
                 do interpret (Commands.handle(gameId, cmd (v, h))) |> Async.ofAsyncResult|> Async.map ignore |> Async.Start
-                return! (ACCEPTED "{}" >=> Writers.setHeader "Location" (sprintf "%s/games/%s" baseUrl (id.ToString()))) ctx
-            | Some _, Some _, false -> return! CONFLICT ({ error = "opponent hasn't joined game yet" } |> Json.serialize |> Json.format) ctx
-            | _, None, _            -> return! BAD_REQUEST ({ error = "unknown position" } |> Json.serialize |> Json.format) ctx
-            | _                     -> return! NOT_FOUND ({ error = "unknown player id" } |> Json.serialize |> Json.format) ctx
+                return! (ACCEPTED "{}" >=> Writers.setHeader "Location" (baseUrl </> Paths.game (gameId.ToString()))) ctx
+            | Some _, Some _, false -> return! CONFLICT ({ error = "opponent hasn't joined game yet" } |> Error.ToJson |> jsonToString) ctx
+            | _, None, _            -> return! BAD_REQUEST ({ error = "unknown position" } |> Error.ToJson |> jsonToString) ctx
+            | _                     -> return! NOT_FOUND ({ error = "unknown player id" } |> Error.ToJson |> jsonToString) ctx
         }
 
 let playersMapActor = 
@@ -287,30 +313,27 @@ let app =
 
     let setHeaders = setJsonHeader >=> setCorsHaeders
 
-    setTemplatesDir "./templates"
-
     choose [ 
         GET >=> choose [
-            path "/" >=> request (urlWithHost >> fun url -> 
-                { HalResource.empty with links = Map.ofList [ "self", [ Link.simple "/" ]
-                                                              gamesRel url, [ Link.simple (sprintf "%s/games" url) ] ] }
-                |> HalResource.toJson |> Json.format |> OK) 
+            path ("/" </> Paths.api) >=> request (urlWithHost >> fun host -> 
+                { Resource.empty with links = Map.ofList [ "self", [ Link.simple (host </> Paths.api) ]
+                                                           gamesRel host, [ Link.simple (host </> Paths.games) ] ] }
+                |> Resource.toJson jsonInterpreter |> jsonToString |> OK) 
                 >=> setHeaders
-            path "/games" >=> request (urlWithHost >> games interpret playersMapActor) >=> setHeaders
-            pathScan "/games/%s" (fun gameId -> 
+            path ("/" </> Paths.games) >=> request (urlWithHost >> games interpret playersMapActor) >=> setHeaders
+            pathScan Routes.game (fun gameId -> 
                 request (urlWithHost >> game interpret playersMapActor gameId)) >=> setHeaders
-            // relations
-            path "/rels/games" >=> page "rel.liquid" ApiDocs.games >=> setCorsHaeders
-            path "/rels/newgame" >=> page "rel.liquid" ApiDocs.newGame >=> setCorsHaeders
-            path "/rels/join" >=> page "rel.liquid" ApiDocs.join >=> setCorsHaeders            
-            path "/rels/play" >=> page "rel.liquid" ApiDocs.play >=> setCorsHaeders
+            path ("/" </> Paths.rels GAMES) >=> Files.file "./public/rels/games.html" >=> setCorsHaeders
+            path ("/" </> Paths.rels NEWGAME) >=> Files.file "./public/rels/newgame.html" >=> setCorsHaeders
+            path ("/" </> Paths.rels JOIN) >=> Files.file "./public/rels/join.html" >=> setCorsHaeders            
+            path ("/" </> Paths.rels PLAY) >=> Files.file "./public/rels/play.html" >=> setCorsHaeders
         ]
         POST >=> choose [
-            path "/games" >=> request (urlWithHost >> start interpret playersMapActor) >=> setHeaders
-            pathScan "/games/%s/join" (fun gameId ->
+            path ("/" </> Paths.games) >=> request (urlWithHost >> start interpret playersMapActor) >=> setHeaders
+            pathScan Routes.join (fun gameId ->
                 request (urlWithHost >> join playersMapActor gameId)) >=> setHeaders
-            pathScan "/games/%s/moves" (fun gameId -> 
-                request (fun req -> play interpret playersMapActor gameId (getResourceFromReq req) (urlWithHost req)))
+            pathScan Routes.moves (fun gameId -> 
+                request (fun req -> play interpret playersMapActor gameId (getPlay req) (urlWithHost req)))
                 >=> setHeaders
         ]
     ]

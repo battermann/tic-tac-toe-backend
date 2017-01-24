@@ -1,0 +1,70 @@
+
+<html>
+  <head>
+    <title>Show all games</title>
+  </head>
+  <body>
+    <h1>Show all games</h1>
+        <p>A list of all the games.</p>
+        <h2>URL</h2>
+        <p><pre><code>/games</code></pre></p>
+        <h2>Request</h2>
+            <h3>Method</h3>
+            <p><pre><code></code></pre></p>  
+            <h3>URL parameters</h3>
+            <p><pre><code>none</code></pre></p>  
+            <h3>Content Type</h3>
+            <p><pre><code>any</code></pre></p>   
+            <h3>Data parameters</h3>
+            <p><pre><code>none</code></pre></p>      
+            <h3>Example</h3>
+            <p><pre><code></code></pre></p>                             
+        <h2>Response</h2>
+            <p>The response contains a list of games.</p>
+            <h3>Response code</h3>
+            <p><pre><code>202 Accpeted</code></pre></p>
+            <h3>Content Type</h3>
+            <p><pre><code>application/hal+json</code></pre></p>
+            <h3>Example</h3>
+            <p><pre><code>{
+   "_embedded":{
+      "http://localhost:8000/rels/games":[
+         {
+            "_links":{
+               "http://localhost:8000/rels/join":{
+                  "href":"http://localhost:8000/games/06cee5ca-3ba5-4c9c-8d00-ac51e0d0f8c8/join"
+               },
+               "self":{
+                  "href":"http://localhost:8000/games/06cee5ca-3ba5-4c9c-8d00-ac51e0d0f8c8"
+               }
+            },
+            "id":"06cee5ca-3ba5-4c9c-8d00-ac51e0d0f8c8",
+            "status":"running"
+         },
+         {
+            "_links":{
+               "http://localhost:8000/rels/join":{
+                  "href":"http://localhost:8000/games/960005e1-0904-4eb9-850b-fbdcbd263e5e/join"
+               },
+               "self":{
+                  "href":"http://localhost:8000/games/960005e1-0904-4eb9-850b-fbdcbd263e5e"
+               }
+            },
+            "id":"960005e1-0904-4eb9-850b-fbdcbd263e5e",
+            "status":"running"
+         }
+      ]
+   },
+   "_links":{
+      "http://localhost:8000/rels/newgame":{
+         "href":"http://localhost:8000/games"
+      },
+      "self":{
+         "href":"http://localhost:8000/games"
+      }
+   }
+}</code></pre></p>                          
+        <h2>Errors</h2>
+        <p><pre><code>500 Interal Server Error</code></pre></p>
+  </body>
+</html>
