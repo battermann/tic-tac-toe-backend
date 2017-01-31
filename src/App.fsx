@@ -1,5 +1,5 @@
 #load "TicTacToe.Interpreters.fsx"
-#load "Hal.fsx"
+#load "Hypermedia.fsx"
 #I "../packages"
 #r "Suave/lib/net40/Suave.dll"
 
@@ -20,6 +20,7 @@ open Suave.RequestErrors
 
 open Chessie.ErrorHandling
 
+open Hypermedia
 open Hal
 open FSharpDataIntepreter
 
@@ -125,30 +126,30 @@ module Mappers =
     let jsonToString (json: JsonValue) = json.ToString(JsonSaveOptions.DisableFormatting)
 
     let toGameList url (rms: (Dsls.ReadModel.GameListItemRm * bool) list) =
-        let toListItem (rm: Dsls.ReadModel.GameListItemRm, closed) = { 
-            Resource.links = Map.ofList [ yield "self", [ Link.simple (url </> Paths.game rm.id) ]
-                                          if not closed then yield (joinRel url, [ Link.simple (url </> Paths.join rm.id) ]) ]
-            properties = Map.ofList [ "id", Hal.Pure <| JsonValue.String(rm.id)
-                                      "status", Hal.Pure <| JsonValue.String(rm.status) ]
-            embedded = Map.empty 
+        let toListItem (rm: Dsls.ReadModel.GameListItemRm, closed) = {
+            Resource.empty with
+                Resource.links = Map.ofList [ yield "self", Singleton (Link.create (Uri (url </> Paths.game rm.id)))
+                                              if not closed then yield (joinRel url, Singleton (Link.create (Uri (url </> Paths.join rm.id)))) ]
+                properties = Map.ofList [ "id", JObject <| JsonValue.String(rm.id)
+                                          "status", JObject <| JsonValue.String(rm.status) ]
         }    
         { 
-            Resource.links = Map.ofList [ "self", [ Link.simple (url </> Paths.games) ]
-                                          newGameRel url, [ Link.simple (url </> Paths.games) ] ]
-            properties = Map.empty
-            embedded = Map.ofList [ gamesRel url, rms |> List.map toListItem ] 
+            Resource.empty with
+                Resource.links = Map.ofList [ "self", Link.create (Uri (url </> Paths.games)) |> Singleton
+                                              newGameRel url, Link.create (Uri (url </> Paths.games)) |> Singleton ]
+                embedded = Map.ofList [ gamesRel url, rms |> List.map toListItem |> Collection ] 
         }    
 
     let toGameResponse url closedForJoin (rm: Dsls.ReadModel.GameRm) =
         { 
-            Resource.links = Map.ofList [ yield "self", [ Link.simple (url </> Paths.game rm.id) ]
-                                          yield "collection", [ Link.simple (url </> Paths.games) ]
-                                          yield playRel url, [ Link.simple (url </> Paths.moves rm.id) ]
-                                          if not closedForJoin then yield (joinRel url, [ Link.simple (url </> Paths.join rm.id) ])  ]
-            properties = Map.ofList [ "status", Hal.Pure <| JsonValue.String(rm.status)
-                                      "id", Hal.Pure <| JsonValue.String(rm.id)
-                                      "grid", Hal.Pure <| serializeGrid rm.grid]
-            embedded = Map.empty
+            Resource.empty with
+                Resource.links = Map.ofList [ yield "self", Singleton (Link.create (Uri (url </> Paths.game rm.id)))
+                                              yield "collection", Singleton (Link.create (Uri (url </> Paths.games)))
+                                              yield playRel url, Singleton (Link.create (Uri (url </> Paths.moves rm.id)))
+                                              if not closedForJoin then yield (joinRel url, Singleton (Link.create (Uri (url </> Paths.join rm.id)) ))  ]
+                properties = Map.ofList [ "status", JObject <| JsonValue.String(rm.status)
+                                          "id", JObject <| JsonValue.String(rm.id)
+                                          "grid", JObject <| serializeGrid rm.grid]
         }
 
 [<AutoOpen>]
@@ -177,7 +178,7 @@ let game interpret (playerMap: Actor<PlayerMapMessage>) (id: string) baseUrl: We
             return! 
                 match rm with
                 | Ok (v,_) -> 
-                    OK (v |> toGameResponse baseUrl closedForJoin |> Resource.toJson jsonInterpreter |> jsonToString) ctx
+                    OK (v |> toGameResponse baseUrl closedForJoin |> FSharpDataIntepreter.Hal.toJson |> jsonToString) ctx
                 | Bad errs -> 
                     INTERNAL_ERROR ({ error = (errs |> String.concat ", ") } |> (Error.ToJson >> jsonToString)) ctx
         }
@@ -198,7 +199,7 @@ let games interpret (playerMap: Actor<PlayerMapMessage>) baseUrl: WebPart =
             return! 
                 match rmWithJoinableFlag with
                 | Ok (v,_) -> 
-                    OK (v |> toGameList baseUrl |> Resource.toJson jsonInterpreter |> jsonToString) ctx
+                    OK (v |> toGameList baseUrl |> FSharpDataIntepreter.Hal.toJson |> jsonToString) ctx
                 | Bad errs ->
                     INTERNAL_ERROR ({ error = (errs |> String.concat ", ") } |> Error.ToJson |> jsonToString) ctx
         }   
@@ -308,6 +309,7 @@ let app =
     let setCorsHaeders = 
         Writers.setHeader "Access-Control-Allow-Origin" "*" 
         >=> Writers.setHeader "Access-Control-Allow-Headers" "content-type" 
+        >=> Writers.setHeader "Access-Control-Expose-Headers" "content-type, location" 
         >=> Writers.setHeader "Access-Control-Allow-Methods" "POST, GET, OPTIONS, DELETE, PATCH"
 
     let setHeaders = setJsonHeader >=> setCorsHaeders
@@ -315,9 +317,9 @@ let app =
     choose [ 
         GET >=> choose [
             path ("/" </> Paths.api) >=> request (urlWithHost >> fun host -> 
-                { Resource.empty with links = Map.ofList [ "self", [ Link.simple (host </> Paths.api) ]
-                                                           gamesRel host, [ Link.simple (host </> Paths.games) ] ] }
-                |> Resource.toJson jsonInterpreter |> jsonToString |> OK) 
+                { Resource.empty with links = Map.ofList [ "self", Singleton (Link.create (Uri (host </> Paths.api)))
+                                                           gamesRel host, Singleton (Link.create (Uri (host </> Paths.games)))  ] }
+                |> FSharpDataIntepreter.Hal.toJson|> jsonToString |> OK) 
                 >=> setHeaders
             path ("/" </> Paths.games) >=> request (urlWithHost >> games interpret playersMapActor) >=> setHeaders
             pathScan Routes.game (fun gameId -> 
