@@ -3,6 +3,7 @@ module TicTacToe.Dsls
 #load "TicTacToe.fsx"
 
 open TicTacToe
+open TicTacToe.Core
 
 type Continuation<'output, 'next> = 'output -> 'next
 

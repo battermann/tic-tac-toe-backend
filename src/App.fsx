@@ -25,6 +25,7 @@ open Hal
 open FSharpDataIntepreter
 
 open TicTacToe
+open TicTacToe.Core
 open Dsls.TicTacToeDsl
 open Dsls.Free
 open Instructions
@@ -155,7 +156,7 @@ module Mappers =
 [<AutoOpen>]
 module Deserialization =
     let getPlay (req : HttpRequest) =
-        let getString rawForm = Text.Encoding.UTF8.GetString(rawForm)
+        let getString (rawForm:byte array) = Text.Encoding.UTF8.GetString(rawForm)
         req.rawForm
         |> getString
         |> JsonValue.Parse

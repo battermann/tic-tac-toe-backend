@@ -1,6 +1,6 @@
 module Hypermedia
 
-#load "../paket-files/include-scripts/net40/include.fsharp.data.fsx"
+#load "../.paket/load/net40/Fsharp.Data.fsx"
 
 let merge (maps: Map<_,_> seq): Map<_,_> = 
     List.concat (maps |> Seq.map Map.toList) |> Map.ofList
