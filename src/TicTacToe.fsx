@@ -1,4 +1,4 @@
-module TicTacToe
+module TicTacToe.Core
 
 #r "../packages/Chessie/lib/net40/Chessie.dll"
 

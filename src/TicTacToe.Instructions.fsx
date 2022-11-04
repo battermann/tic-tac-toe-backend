@@ -1,7 +1,7 @@
 module TicTacToe.Instructions
 
 #load "TicTacToe.Dsls.fsx"
-
+open TicTacToe.Core
 open Dsls.Free
 open Dsls.TicTacToeDsl
 

@@ -1,8 +1,8 @@
 module TicTacToe.Interpreters
 
 #load "TicTacToe.Instructions.fsx"
-
 open TicTacToe
+open TicTacToe.Core
 open TicTacToe.Instructions
 open Dsls
 
