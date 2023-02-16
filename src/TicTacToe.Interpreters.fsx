@@ -10,15 +10,20 @@ open Dsls
 type Actor<'T> = MailboxProcessor<'T>
 
 module Effects =
-    open Chessie.ErrorHandling
+    open FSharpPlus
+    open FSharpPlus.Data
 
-    type Error = string
-    type Effect<'a> = AsyncResult<'a, Error>   
-    let ofResult r: Effect<'a> = r |> Async.singleton |> AR
+    type Effect<'a> = Async<Result<'a, string>>
+    type AsyncResultBuilder<'t> () =
+        inherit MonadFxBuilder<ResultT<'t>> ()
+        member _.Source x = ResultT x
+        member _.Run (x:ResultT<'t>) = ResultT.run x
 
-    let effects = asyncTrial
+    let ofResult r: Effect<'a> = r |> async.Return
 
-    let bind (f: 'a -> Effect<'b>) (x: Effect<'a>): Effect<'b> =
+    let effects<'t> = AsyncResultBuilder<'t> ()
+
+    let bind (f: 'a -> Effect<'b>) (x: Effect<'a>) : Effect<'b> =
         effects {
             let! v = x
             return! f v
@@ -26,11 +31,10 @@ module Effects =
 
     let (>>=) x f = bind f x
 
-    let singleton x: Effect<'a> = ok x |> ofResult
+    let singleton x: Effect<'a> = Ok x |> async.Return
 
 
 module TicTacToe =
-    open Chessie.ErrorHandling
     open Effects
     open Dsls.TicTacToeDsl
     open Free
@@ -48,27 +52,26 @@ module TicTacToe =
 
 
 module Domain =
-    open Chessie.ErrorHandling
     open Effects
     open Dsls.Domain
 
     let interpret dsl: Effect<'a> =
         match dsl with
         | Handle((state, cmd), cont) ->
-            Domain.handle state cmd |> Trial.lift cont |> Effects.ofResult
+            Domain.handle state cmd |> Result.map cont |> Effects.ofResult
         | Replay(events, cont) ->
-            Domain.replay events |> Trial.lift cont |> Effects.ofResult
+            Domain.replay events |> Result.map cont |> Effects.ofResult
 
 
 module EventStore =
-    open Chessie.ErrorHandling
+    open FSharpPlus
     open Effects
     open Dsls.EventStore
 
     type Stream = { mutable events:  (Event * Version) list }
 
     type EventStoreMsg = 
-        | AppendToStream of string * int * Event list * AsyncReplyChannel<Result<unit, Error>>
+        | AppendToStream of string * int * Event list * AsyncReplyChannel<Result<unit, string>>
         | TryGetStream of string * AsyncReplyChannel<Stream option>
 
     let eventStoreActor = 
@@ -84,13 +87,13 @@ module EventStore =
                         match eventStore.TryFind streamId with
                         | Some(stream) ->
                             if (stream.events |> List.last |> snd) <> Version v then
-                                rc.Reply(fail "resource has been modified, cannot make changes")
+                                rc.Reply(Error "resource has been modified, cannot make changes")
                             else
                                 ignore (stream.events <- stream.events @ eventsWithVersion)
-                                rc.Reply(ok ()) 
+                                rc.Reply(Ok ()) 
                             return! loop eventStore
                         | None ->
-                            rc.Reply(ok ())
+                            rc.Reply(Ok ())
                             return! loop (eventStore.Add(streamId, { events = eventsWithVersion }))
                     | TryGetStream (streamId, rc) ->
                         rc.Reply(eventStore.TryFind streamId)
@@ -109,18 +112,17 @@ module EventStore =
                         stream.events
                         |> List.map fst
                     | None -> []
-                    |> cont |> ok
-            } |> AR
+                    |> cont |> Ok
+            }
 
         | Append(((GameId gId), (Version v), newEvents), cont) ->
             async {
                 let! result = eventStoreActor.PostAndAsyncReply(fun rc -> AppendToStream (gId.ToString(), v, newEvents, rc))
                 return cont <!> result
-            } |> AR
+            }
 
 
 module EventBus =
-    open Chessie.ErrorHandling
     open Effects
     open Dsls.EventBus
 
@@ -150,11 +152,11 @@ module EventBus =
         match dsl with
         | Publish((id, events), cont) -> 
             do eventBusActor.Post(PublishEvents(id, events))
-            () |> cont |> ok |> Effects.ofResult 
+            () |> cont |> Ok |> Effects.ofResult 
 
 
 module ReadModel =
-    open Chessie.ErrorHandling
+    open FSharpPlus
     open Effects
     open Dsls.ReadModel
 
@@ -255,11 +257,11 @@ module ReadModel =
             async{
                 let! maybeGame = readModelsActor.PostAndAsyncReply(fun rc -> TryFind(id, rc))
                 return 
-                    maybeGame |> Trial.failIfNone "not found" 
-                    |> Trial.lift cont
-            } |> AR
+                    maybeGame |> Option.toResultWith "not found" 
+                    |> Result.map cont
+            }
         | Games(_, cont) ->
             async {
                 let! games = readModelsActor.PostAndAsyncReply(fun rc -> GameList(rc)) 
-                return games |> cont |> ok
-            } |> AR
+                return games |> cont |> Ok
+            }

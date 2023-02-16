@@ -17,8 +17,6 @@ open Suave
 open Suave.Filters
 open Suave.RequestErrors
 
-open Chessie.ErrorHandling
-
 open Hypermedia
 open Hal
 open FSharpDataIntepreter
@@ -70,7 +68,7 @@ type Players = {
 
 type PlayerMapMessage = 
     | Add     of GameId * Players
-    | TryJoin of GameId * PlayerId * AsyncReplyChannel<Result<unit, Error>> 
+    | TryJoin of GameId * PlayerId * AsyncReplyChannel<Result<unit, string>>
     | TryFind of GameId * AsyncReplyChannel<Players option>
 
 [<AutoOpen>]
@@ -174,35 +172,35 @@ let game interpret (playerMap: Actor<PlayerMapMessage>) (id: string) baseUrl: We
     let gameId = Guid(id) |> GameId
     fun (ctx: HttpContext) ->
         async {
-            let! rm = interpret (Queries.game(gameId)) |> Async.ofAsyncResult
+            let! rm = interpret (Queries.game(gameId))
             let! closedForJoin = bothPlayersJoined playerMap gameId
             return! 
                 match rm with
-                | Ok (v,_) -> 
+                | Ok v -> 
                     OK (v |> toGameResponse baseUrl closedForJoin |> FSharpDataIntepreter.Hal.toJson |> jsonToString) ctx
-                | Bad errs -> 
-                    INTERNAL_ERROR ({ error = (errs |> String.concat ", ") } |> (Error.ToJson >> jsonToString)) ctx
+                | Error errs -> 
+                    INTERNAL_ERROR ({ error = errs } |> (Error.ToJson >> jsonToString)) ctx
         }
 
 let gamesWithJoinableFlag (interpret: Free<_> -> Effect<_>) (playerMap: Actor<PlayerMapMessage>) =
-        asyncTrial {
+        effects {
             let! games = interpret (Queries.games) 
             let! gamesWithFlag = 
-                games |> List.map (fun (g: Dsls.ReadModel.GameListItemRm) -> bothPlayersJoined playerMap (Guid(g.id) |> GameId) |> Async.map (fun b -> g,b)) 
-                |> Async.Parallel
+                games |> List.map (fun (g: Dsls.ReadModel.GameListItemRm) -> bothPlayersJoined playerMap (Guid(g.id) |> GameId) |> Async.map (fun b -> g,b))
+                |> Async.Parallel |> Async.map Ok
             return gamesWithFlag |> Array.toList
         }
 
 let games interpret (playerMap: Actor<PlayerMapMessage>) baseUrl: WebPart =
     fun (ctx: HttpContext) ->
         async {
-            let! rmWithJoinableFlag = gamesWithJoinableFlag interpret playerMap |> Async.ofAsyncResult
+            let! rmWithJoinableFlag = gamesWithJoinableFlag interpret playerMap
             return! 
                 match rmWithJoinableFlag with
-                | Ok (v,_) -> 
+                | Ok v -> 
                     OK (v |> toGameList baseUrl |> FSharpDataIntepreter.Hal.toJson |> jsonToString) ctx
-                | Bad errs ->
-                    INTERNAL_ERROR ({ error = (errs |> String.concat ", ") } |> Error.ToJson |> jsonToString) ctx
+                | Error errs ->
+                    INTERNAL_ERROR ({ error = errs } |> Error.ToJson |> jsonToString) ctx
         }   
 
 let start interpret (playerMap: Actor<PlayerMapMessage>) baseUrl: WebPart =
@@ -210,7 +208,7 @@ let start interpret (playerMap: Actor<PlayerMapMessage>) baseUrl: WebPart =
     let playerId = Guid.NewGuid()
     do playerMap.Post(Add(GameId gameId, { x = PlayerId playerId |> Some; o = None }))
     // handle cmd asynchronously
-    do interpret (Commands.handle(GameId gameId, Start)) |> Async.ofAsyncResult|> Async.map ignore |> Async.Start
+    do interpret (Commands.handle(GameId gameId, Start)) |> Async.map ignore |> Async.Start
     let body = { playerId = playerId.ToString() } |> Player.ToJson |> jsonToString
     ACCEPTED body >=> Writers.setHeader "Location" (baseUrl </> Paths.game (gameId.ToString()))
 
@@ -223,14 +221,14 @@ let join (playerMap: Actor<PlayerMapMessage>) (gameId: string) baseUrl: WebPart 
             | Ok _ ->
                 let body = { playerId = playerId.ToString() } |> Player.ToJson |> jsonToString
                 return! (ACCEPTED body >=> Writers.setHeader "Location" (baseUrl </> Paths.game (gameId.ToString()))) ctx
-            | Bad errs ->
+            | Error err ->
                 return!
-                    if errs |> List.exists ((=) "game already running") then
-                        CONFLICT ({ error = (errs |> String.concat ", ") } |> Error.ToJson |> jsonToString) ctx
-                    elif errs |> List.exists ((=) "game invalid") then
-                        NOT_FOUND ({ error = (errs |> String.concat ", ") } |> Error.ToJson |> jsonToString) ctx
+                    if err = "game already running" then
+                        CONFLICT ({ error = err } |> Error.ToJson |> jsonToString) ctx
+                    elif err = "game invalid" then
+                        NOT_FOUND ({ error = err } |> Error.ToJson |> jsonToString) ctx
                     else 
-                        INTERNAL_ERROR ({ error = (errs |> String.concat ", ")} |> Error.ToJson |> jsonToString) ctx
+                        INTERNAL_ERROR ({ error = err } |> Error.ToJson |> jsonToString) ctx
                         
         }
 
@@ -258,7 +256,7 @@ let play interpret (playerMap: Actor<PlayerMapMessage>) (id: string) (play:Play)
             | Some { x = Some plX; o = Some plO }, Some(v,h), true ->
                 let cmd = if (Guid(play.playerId) |> PlayerId) = plX then PlayX else PlayO
                 // handle cmd asyncronously
-                do interpret (Commands.handle(gameId, cmd (v, h))) |> Async.ofAsyncResult|> Async.map ignore |> Async.Start
+                do interpret (Commands.handle(gameId, cmd (v, h))) |> Async.map ignore |> Async.Start
                 return! (ACCEPTED "{}" >=> Writers.setHeader "Location" (baseUrl </> Paths.game (gameId.ToString()))) ctx
             | Some _, Some _, false -> return! CONFLICT ({ error = "opponent hasn't joined game yet" } |> Error.ToJson |> jsonToString) ctx
             | _, None, _            -> return! BAD_REQUEST ({ error = "unknown position" } |> Error.ToJson |> jsonToString) ctx
@@ -276,13 +274,13 @@ let playersMapActor =
                 | TryJoin (gameId, player, rc) -> 
                     match playersMap.TryFind gameId with
                     | Some { x = Some _; o = Some _ } ->
-                        rc.Reply(fail "game already running")
+                        rc.Reply(Error "game already running")
                         return! loop playersMap
                     | Some { x = Some pX; o = None } ->
-                        rc.Reply(ok ())
+                        rc.Reply(Ok ())
                         return! loop (playersMap.Add(gameId, { x = Some pX; o = player |> Some }))
                     | _ -> 
-                        rc.Reply(fail "game invalid")
+                        rc.Reply(Error "game invalid")
                         return! loop playersMap
                 | TryFind (gameId, rc) ->
                     rc.Reply(playersMap.TryFind gameId)
