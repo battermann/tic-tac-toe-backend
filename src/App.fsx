@@ -33,6 +33,7 @@ open Types
 open Interpreters
 open Effects
 
+let (!!) x = Path.Combine (__SOURCE_DIRECTORY__, x)
 let (</>) path1 path2 = Path.Combine(path1, path2).Replace('\\','/')
 
 let GAMES = "games"
@@ -325,10 +326,10 @@ let app =
             path ("/" </> Paths.games) >=> request (urlWithHost >> games interpret playersMapActor) >=> setHeaders
             pathScan Routes.game (fun gameId -> 
                 request (urlWithHost >> game interpret playersMapActor gameId)) >=> setHeaders
-            path ("/" </> Paths.rels GAMES) >=> Files.file "./public/rels/games.html" >=> setCorsHaeders
-            path ("/" </> Paths.rels NEWGAME) >=> Files.file "./public/rels/newgame.html" >=> setCorsHaeders
-            path ("/" </> Paths.rels JOIN) >=> Files.file "./public/rels/join.html" >=> setCorsHaeders            
-            path ("/" </> Paths.rels PLAY) >=> Files.file "./public/rels/play.html" >=> setCorsHaeders
+            path ("/" </> Paths.rels GAMES) >=> Files.file !!"../public/rels/games.html" >=> setCorsHaeders
+            path ("/" </> Paths.rels NEWGAME) >=> Files.file !!"../public/rels/newgame.html" >=> setCorsHaeders
+            path ("/" </> Paths.rels JOIN) >=> Files.file !!"../public/rels/join.html" >=> setCorsHaeders            
+            path ("/" </> Paths.rels PLAY) >=> Files.file !!"../public/rels/play.html" >=> setCorsHaeders
         ]
         POST >=> choose [
             path ("/" </> Paths.games) >=> request (urlWithHost >> start interpret playersMapActor) >=> setHeaders
@@ -342,7 +343,10 @@ let app =
 
 let config =
     let ip = IPAddress.Parse "0.0.0.0"
-    let [|_; port|] = fsi.CommandLineArgs
+    let port =
+        match fsi.CommandLineArgs with
+        | [|_; port|] -> port
+        | _           -> "8080"
     { defaultConfig with
         //logger = Logging.LoggerEx   .saneDefaultsFor Logging.LogLevel.Info
         bindings= [ HttpBinding.create HTTP ip (uint16 port) ] }
