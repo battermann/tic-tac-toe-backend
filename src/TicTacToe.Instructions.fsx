@@ -2,40 +2,41 @@ module TicTacToe.Instructions
 
 #load "TicTacToe.Dsls.fsx"
 open TicTacToe.Core
-open Dsls.Free
+open FSharpPlus
+open FSharpPlus.Data
 open Dsls.TicTacToeDsl
 
 module private Domain =
     open Dsls.Domain
 
-    let handle v = FreeMonad.liftF(Handle(v, id) |> Domain)
-    let replay v = FreeMonad.liftF(Replay(v, id) |> Domain)
+    let handle v = Free.liftF(Handle(v, id) |> Domain)
+    let replay v = Free.liftF(Replay(v, id) |> Domain)
 
 module private EventBus =
     open Dsls.EventBus
 
-    let publish v = FreeMonad.liftF(Publish(v, id) |> EventBus)
+    let publish v = Free.liftF(Publish(v, id) |> EventBus)
 
 module private EventStore =
     open Dsls.EventStore
 
-    let append v = FreeMonad.liftF(Append(v, id) |> EventStore)
-    let getStream v = FreeMonad.liftF(GetStream(v, id) |> EventStore)
+    let append v = Free.liftF(Append(v, id) |> EventStore)
+    let getStream v = Free.liftF(GetStream(v, id) |> EventStore)
 
 module ReadModel =
     open Dsls.ReadModel
 
-    let subscribe v = FreeMonad.liftF(SubscribeToEventBus(v, id) |> ReadModel)
+    let subscribe v = Free.liftF(SubscribeToEventBus(v, id) |> ReadModel)
 
 module Queries =
     open Dsls.ReadModel
 
-    let game v = FreeMonad.liftF(Game(v, id) |> ReadModel)
-    let games = FreeMonad.liftF(Games((), id) |> ReadModel)
+    let game v = Free.liftF(Game(v, id) |> ReadModel)
+    let games = Free.liftF(Games((), id) |> ReadModel)
 
 module Commands =
     let handle (id: GameId, cmd: Command) =
-        free {
+        monad {
             let! events = EventStore.getStream id
             let! state = Domain.replay events
             let! (v, newEvents) = Domain.handle (state, cmd)

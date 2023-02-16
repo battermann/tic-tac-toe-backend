@@ -29,26 +29,28 @@ module Effects =
             return! f v
         }
 
-    let (>>=) x f = bind f x
-
     let singleton x: Effect<'a> = Ok x |> async.Return
 
 
 module TicTacToe =
     open Effects
     open Dsls.TicTacToeDsl
-    open Free
+    open FSharpPlus.Data
 
-    let rec interpret dom chan es rm dsl =
-        let interpretRec = interpret dom chan es rm
-        match dsl with
-        | Pure v -> singleton v
-        | Free free ->
-            match free with
-            | Domain x     -> dom x >>= interpretRec
-            | EventBus x   -> chan x >>= interpretRec
-            | EventStore x -> es x >>= interpretRec
-            | ReadModel x  -> rm x >>= interpretRec
+    let (>>=) x f = Effects.bind f x
+
+    let inline interpret dom chan es rm dsl =
+        let rec interpret dom chan es rm dsl =
+            let interpretRec = interpret dom chan es rm
+            match Free.run dsl with
+            | Pure v -> singleton v
+            | Roll free ->
+                match free with
+                | Domain x     -> dom x >>= interpretRec
+                | EventBus x   -> chan x >>= interpretRec
+                | EventStore x -> es x >>= interpretRec
+                | ReadModel x  -> rm x >>= interpretRec
+        interpret dom chan es rm dsl
 
 
 module Domain =

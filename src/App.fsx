@@ -23,10 +23,8 @@ open FSharpDataIntepreter
 
 open TicTacToe
 open TicTacToe.Core
-open Dsls.TicTacToeDsl
-open Dsls.Free
+open FSharpPlus.Data
 open Instructions
-open Types
 open Interpreters
 open Effects
 
@@ -182,7 +180,7 @@ let game interpret (playerMap: Actor<PlayerMapMessage>) (id: string) baseUrl: We
                     INTERNAL_ERROR ({ error = errs } |> (Error.ToJson >> jsonToString)) ctx
         }
 
-let gamesWithJoinableFlag (interpret: Free<_> -> Effect<_>) (playerMap: Actor<PlayerMapMessage>) =
+let gamesWithJoinableFlag (interpret: Free<_,_> -> Effect<_>) (playerMap: Actor<PlayerMapMessage>) =
         effects {
             let! games = interpret (Queries.games) 
             let! gamesWithFlag = 
@@ -288,7 +286,7 @@ let playersMapActor =
             }
         loop Map.empty)
 
-let interpret free =
+let inline interpret free =
     TicTacToe.interpret
         Domain.interpret
         EventBus.interpret
