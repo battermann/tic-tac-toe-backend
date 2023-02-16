@@ -33,7 +33,7 @@ open Types
 open Interpreters
 open Effects
 
-let (</>) path1 path2 = Path.Combine(path1, path2)
+let (</>) path1 path2 = Path.Combine(path1, path2).Replace('\\','/')
 
 let GAMES = "games"
 let GAME = "game"
@@ -96,9 +96,9 @@ module Requests =
         static member FromJson (x:JsonValue) =
             match x with
             | JsonValue.Record props ->
-                { vertical = props |> findString "vertical"
-                  horizontal = props |> findString "horizontal"
-                  playerId = props |> findString "playerId" }
+                { vertical = (props |> findString "vertical").Replace("\"","")
+                  horizontal = (props |> findString "horizontal").Replace("\"","")
+                  playerId = (props |> findString "playerId").Replace("\"","") }
             | _ -> failwith "bad format"
 
     type Player = {
