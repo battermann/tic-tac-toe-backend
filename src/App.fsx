@@ -318,13 +318,13 @@ let app =
 
     choose [ 
         GET >=> choose [
-            path ("/" </> Paths.api) >=> request (urlWithHost >> fun host -> 
+            path ("/" </> Paths.api) >=> request (urlWithHost >> fun host ->
                 { Resource.empty with links = Map.ofList [ "self", Singleton (Link.create (Uri (host </> Paths.api)))
                                                            gamesRel host, Singleton (Link.create (Uri (host </> Paths.games)))  ] }
                 |> FSharpDataIntepreter.Hal.toJson|> jsonToString |> OK) 
                 >=> setHeaders
             path ("/" </> Paths.games) >=> request (urlWithHost >> games interpret playersMapActor) >=> setHeaders
-            pathScan Routes.game (fun gameId -> 
+            pathScan Routes.game (fun gameId ->
                 request (urlWithHost >> game interpret playersMapActor gameId)) >=> setHeaders
             path ("/" </> Paths.rels GAMES) >=> Files.file !!"../public/rels/games.html" >=> setCorsHaeders
             path ("/" </> Paths.rels NEWGAME) >=> Files.file !!"../public/rels/newgame.html" >=> setCorsHaeders
@@ -341,6 +341,18 @@ let app =
         ]
     ]
 
+
+open Suave.Logging
+
+let private createLogger () =
+    let target = LiterateConsoleTarget (
+                        name = [|"BackEnd"|],
+                        minLevel = LogLevel.Verbose,
+                        options = Literate.LiterateOptions.create()
+                        )
+    let logger = target :> Logger 
+    logger
+
 let config =
     let ip = IPAddress.Parse "0.0.0.0"
     let port =
@@ -348,7 +360,7 @@ let config =
         | [|_; port|] -> port
         | _           -> "8080"
     { defaultConfig with
-        //logger = Logging.LoggerEx   .saneDefaultsFor Logging.LogLevel.Info
+        logger = createLogger ()
         bindings= [ HttpBinding.create HTTP ip (uint16 port) ] }
 
 interpret (ReadModel.subscribe())
