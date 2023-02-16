@@ -1,7 +1,6 @@
 #load "TicTacToe.Interpreters.fsx"
 #load "Hypermedia.fsx"
-#I "../packages"
-#r "Suave/lib/net40/Suave.dll"
+#r "nuget: Suave,2.5.4"
 
 open System
 open System.Net

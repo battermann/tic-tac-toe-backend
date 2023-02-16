@@ -1,6 +1,6 @@
 module Hypermedia
 
-#r "../packages/FSharp.Data/lib/net40/FSharp.Data.dll"
+#r "nuget: FSharp.Data,5.0.2"
 
 let merge (maps: Map<_,_> seq): Map<_,_> = 
     List.concat (maps |> Seq.map Map.toList) |> Map.ofList

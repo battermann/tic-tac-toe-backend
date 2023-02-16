@@ -1,6 +1,6 @@
 module TicTacToe.Core
 
-#r "../packages/Chessie/lib/net40/Chessie.dll"
+#r "nuget: Chessie,0.6.0"
 
 open System
 
