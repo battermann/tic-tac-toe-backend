@@ -64,15 +64,14 @@ module EventBus =
 
 
 module TicTacToeDsl =
+    open FSharpPlus.Data
     type TicTacToeDsl<'next> =
-    | Domain     of Domain.Domain<'next>
-    | EventStore of EventStore.EventStore<'next>
-    | ReadModel  of ReadModel.ReadModel<'next>
-    | EventBus   of EventBus.EventBus<'next>
-    with
-        static member Map (dsl : TicTacToeDsl<'a>, f: 'a -> 'b) : TicTacToeDsl<'b> =
-            match dsl with
-            | Domain d      -> Domain.Domain<'a>.Map (d, f) |> Domain
-            | EventStore es -> EventStore.EventStore<'a>.Map (es, f) |> EventStore
-            | EventBus bus  -> EventBus.EventBus<'a>.Map (bus, f) |> EventBus
-            | ReadModel rm  -> ReadModel.ReadModel<'a>.Map (rm, f) |> ReadModel
+        Free<
+            Coproduct<
+                Coproduct<
+                    Domain.Domain<'next>, 
+                    EventStore.EventStore<'next>>,
+                Coproduct<
+                    ReadModel.ReadModel<'next>,
+                    EventBus.EventBus<'next>>>, 
+                'next>

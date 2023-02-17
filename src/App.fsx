@@ -286,12 +286,7 @@ let playersMapActor =
             }
         loop Map.empty)
 
-let inline interpret free =
-    TicTacToe.interpret
-        Domain.interpret
-        EventBus.interpret
-        EventStore.interpret
-        ReadModel.interpret free
+let interpret = TicTacToe.interpret
 
 let app =
     let urlWithHost (request : HttpRequest) = 

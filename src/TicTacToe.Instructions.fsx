@@ -9,30 +9,30 @@ open Dsls.TicTacToeDsl
 module private Domain =
     open Dsls.Domain
 
-    let handle v = Free.liftF(Handle(v, id) |> Domain)
-    let replay v = Free.liftF(Replay(v, id) |> Domain)
+    let handle v : TicTacToeDsl<_> = Handle(v, id) |> InL |> InL |> Free.liftF
+    let replay v : TicTacToeDsl<_> = Replay(v, id) |> InL |> InL |> Free.liftF
 
 module private EventBus =
     open Dsls.EventBus
 
-    let publish v = Free.liftF(Publish(v, id) |> EventBus)
+    let publish v : TicTacToeDsl<_> = Publish(v, id) |> InR |> InR |> Free.liftF
 
 module private EventStore =
     open Dsls.EventStore
 
-    let append v = Free.liftF(Append(v, id) |> EventStore)
-    let getStream v = Free.liftF(GetStream(v, id) |> EventStore)
+    let append v : TicTacToeDsl<_> = Append(v, id) |> InR |> InL |> Free.liftF
+    let getStream v : TicTacToeDsl<_> = GetStream(v, id) |> InR |> InL |> Free.liftF
 
 module ReadModel =
     open Dsls.ReadModel
 
-    let subscribe v = Free.liftF(SubscribeToEventBus(v, id) |> ReadModel)
+    let subscribe v : TicTacToeDsl<_> = SubscribeToEventBus(v, id) |> InL |> InR |> Free.liftF
 
 module Queries =
     open Dsls.ReadModel
 
-    let game v = Free.liftF(Game(v, id) |> ReadModel)
-    let games = Free.liftF(Games((), id) |> ReadModel)
+    let game v : TicTacToeDsl<_> = Game(v, id) |> InL |> InR |> Free.liftF
+    let games : TicTacToeDsl<_> = Games((), id) |> InL |> InR |> Free.liftF
 
 module Commands =
     let handle (id: GameId, cmd: Command) =

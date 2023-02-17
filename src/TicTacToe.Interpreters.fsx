@@ -20,23 +20,6 @@ module Effects =
     let effects<'t> = monad<'t>
 
     let singleton x: Effect<'a> = result x
-module TicTacToe =
-    open Effects
-    open Dsls.TicTacToeDsl
-    open FSharpPlus.Data
-
-    let inline interpret dom chan es rm dsl =
-        let rec interpret dom chan es rm dsl =
-            let interpretRec = interpret dom chan es rm
-            match Free.run dsl with
-            | Pure v -> singleton v
-            | Roll free ->
-                match free with
-                | Domain x     -> dom x >>= interpretRec
-                | EventBus x   -> chan x >>= interpretRec
-                | EventStore x -> es x >>= interpretRec
-                | ReadModel x  -> rm x >>= interpretRec
-        interpret dom chan es rm dsl
 
 
 module Domain =
@@ -46,9 +29,9 @@ module Domain =
     let interpret dsl: Effect<'a> =
         match dsl with
         | Handle((state, cmd), cont) ->
-            Domain.handle state cmd |> Result.map cont |> Effects.ofResult
+            Domain.handle state cmd |> Effects.ofResult >>= cont
         | Replay(events, cont) ->
-            Domain.replay events |> Result.map cont |> Effects.ofResult
+            Domain.replay events |> Effects.ofResult >>= cont
 
 
 module EventStore =
@@ -101,14 +84,14 @@ module EventStore =
                         stream.events
                         |> List.map fst
                     | None -> []
-                    |> cont |> Ok
-            } |> ResultT
+                    |> Ok
+            } |> ResultT >>= cont
 
         | Append(((GameId gId), (Version v), newEvents), cont) ->
             async {
                 let! result = eventStoreActor.PostAndAsyncReply(fun rc -> AppendToStream (gId.ToString(), v, newEvents, rc))
-                return cont <!> result
-            } |> ResultT
+                return result
+            } |> ResultT >>= cont
 
 
 module EventBus =
@@ -141,7 +124,7 @@ module EventBus =
         match dsl with
         | Publish((id, events), cont) -> 
             do eventBusActor.Post(PublishEvents(id, events))
-            () |> cont |> Ok |> Effects.ofResult
+            () |> Ok |> Effects.ofResult >>= cont
 
 
 module ReadModel =
@@ -242,16 +225,27 @@ module ReadModel =
         match dsl with
         | SubscribeToEventBus(_, cont) ->
             do EventBus.eventBusActor.Post(EventBus.Subscribe(eventHandler))
-            () |> cont |> Effects.singleton
+            () |> Effects.singleton >>= cont
         | Game(id, cont) ->
             async{
                 let! maybeGame = readModelsActor.PostAndAsyncReply(fun rc -> TryFind(id, rc))
-                return 
-                    maybeGame |> Option.toResultWith "not found" 
-                    |> Result.map cont
-            } |> ResultT
+                return maybeGame |> Option.toResultWith "not found"
+            } |> ResultT >>= cont
         | Games(_, cont) ->
             async {
                 let! games = readModelsActor.PostAndAsyncReply(fun rc -> GameList(rc)) 
-                return games |> cont |> Ok
-            } |> ResultT
+                return games |> Ok
+            } |> ResultT >>= cont
+
+
+module TicTacToe =
+    open Dsls.TicTacToeDsl
+    open FSharpPlus.Data
+
+    let rec interpret (dsl: TicTacToeDsl<_>) =
+        let go = function
+        | InL (InL x) -> Domain.interpret x
+        | InL (InR x) -> EventStore.interpret x
+        | InR (InL x) -> ReadModel.interpret x
+        | InR (InR x) -> EventBus.interpret x
+        Free.iterM go dsl
