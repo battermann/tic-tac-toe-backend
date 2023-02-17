@@ -170,7 +170,7 @@ let game interpret (playerMap: Actor<PlayerMapMessage>) (id: string) baseUrl: We
     let gameId = Guid(id) |> GameId
     fun (ctx: HttpContext) ->
         async {
-            let! rm = interpret (Queries.game(gameId))
+            let! rm = interpret (Queries.game(gameId)) |> ResultT.run
             let! closedForJoin = bothPlayersJoined playerMap gameId
             return! 
                 match rm with
@@ -185,28 +185,28 @@ let gamesWithJoinableFlag (interpret: Free<_,_> -> Effect<_>) (playerMap: Actor<
             let! games = interpret (Queries.games) 
             let! gamesWithFlag = 
                 games |> List.map (fun (g: Dsls.ReadModel.GameListItemRm) -> bothPlayersJoined playerMap (Guid(g.id) |> GameId) |> Async.map (fun b -> g,b))
-                |> Async.Parallel |> Async.map Ok
+                |> Async.Parallel |> ResultT.lift
             return gamesWithFlag |> Array.toList
         }
 
 let games interpret (playerMap: Actor<PlayerMapMessage>) baseUrl: WebPart =
     fun (ctx: HttpContext) ->
         async {
-            let! rmWithJoinableFlag = gamesWithJoinableFlag interpret playerMap
+            let! rmWithJoinableFlag = gamesWithJoinableFlag interpret playerMap |> ResultT.run
             return! 
                 match rmWithJoinableFlag with
                 | Ok v -> 
                     OK (v |> toGameList baseUrl |> FSharpDataIntepreter.Hal.toJson |> jsonToString) ctx
                 | Error errs ->
                     INTERNAL_ERROR ({ error = errs } |> Error.ToJson |> jsonToString) ctx
-        }   
+        }
 
 let start interpret (playerMap: Actor<PlayerMapMessage>) baseUrl: WebPart =
     let gameId = Guid.NewGuid()
     let playerId = Guid.NewGuid()
     do playerMap.Post(Add(GameId gameId, { x = PlayerId playerId |> Some; o = None }))
     // handle cmd asynchronously
-    do interpret (Commands.handle(GameId gameId, Start)) |> Async.map ignore |> Async.Start
+    do interpret (Commands.handle(GameId gameId, Start)) |> ResultT.run |> Async.map ignore |> Async.Start
     let body = { playerId = playerId.ToString() } |> Player.ToJson |> jsonToString
     ACCEPTED body >=> Writers.setHeader "Location" (baseUrl </> Paths.game (gameId.ToString()))
 
@@ -254,7 +254,7 @@ let play interpret (playerMap: Actor<PlayerMapMessage>) (id: string) (play:Play)
             | Some { x = Some plX; o = Some plO }, Some(v,h), true ->
                 let cmd = if (Guid(play.playerId) |> PlayerId) = plX then PlayX else PlayO
                 // handle cmd asyncronously
-                do interpret (Commands.handle(gameId, cmd (v, h))) |> Async.map ignore |> Async.Start
+                do interpret (Commands.handle(gameId, cmd (v, h))) |> ResultT.run |> Async.map ignore |> Async.Start
                 return! (ACCEPTED "{}" >=> Writers.setHeader "Location" (baseUrl </> Paths.game (gameId.ToString()))) ctx
             | Some _, Some _, false -> return! CONFLICT ({ error = "opponent hasn't joined game yet" } |> Error.ToJson |> jsonToString) ctx
             | _, None, _            -> return! BAD_REQUEST ({ error = "unknown position" } |> Error.ToJson |> jsonToString) ctx

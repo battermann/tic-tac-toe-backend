@@ -13,31 +13,17 @@ module Effects =
     open FSharpPlus
     open FSharpPlus.Data
 
-    type Effect<'a> = Async<Result<'a, string>>
-    type AsyncResultBuilder<'t> () =
-        inherit MonadFxBuilder<ResultT<'t>> ()
-        member _.Source x = ResultT x
-        member _.Run (x:ResultT<'t>) = ResultT.run x
+    type Effect<'a> = ResultT<Async<Result<'a, string>>>
 
-    let ofResult r: Effect<'a> = r |> async.Return
+    let ofResult r: Effect<'a> = ResultT.hoist r
 
-    let effects<'t> = AsyncResultBuilder<'t> ()
+    let effects<'t> = monad<'t>
 
-    let bind (f: 'a -> Effect<'b>) (x: Effect<'a>) : Effect<'b> =
-        effects {
-            let! v = x
-            return! f v
-        }
-
-    let singleton x: Effect<'a> = Ok x |> async.Return
-
-
+    let singleton x: Effect<'a> = result x
 module TicTacToe =
     open Effects
     open Dsls.TicTacToeDsl
     open FSharpPlus.Data
-
-    let (>>=) x f = Effects.bind f x
 
     let inline interpret dom chan es rm dsl =
         let rec interpret dom chan es rm dsl =
@@ -67,6 +53,7 @@ module Domain =
 
 module EventStore =
     open FSharpPlus
+    open FSharpPlus.Data
     open Effects
     open Dsls.EventStore
 
@@ -115,13 +102,13 @@ module EventStore =
                         |> List.map fst
                     | None -> []
                     |> cont |> Ok
-            }
+            } |> ResultT
 
         | Append(((GameId gId), (Version v), newEvents), cont) ->
             async {
                 let! result = eventStoreActor.PostAndAsyncReply(fun rc -> AppendToStream (gId.ToString(), v, newEvents, rc))
                 return cont <!> result
-            }
+            } |> ResultT
 
 
 module EventBus =
@@ -154,11 +141,12 @@ module EventBus =
         match dsl with
         | Publish((id, events), cont) -> 
             do eventBusActor.Post(PublishEvents(id, events))
-            () |> cont |> Ok |> Effects.ofResult 
+            () |> cont |> Ok |> Effects.ofResult
 
 
 module ReadModel =
     open FSharpPlus
+    open FSharpPlus.Data
     open Effects
     open Dsls.ReadModel
 
@@ -261,9 +249,9 @@ module ReadModel =
                 return 
                     maybeGame |> Option.toResultWith "not found" 
                     |> Result.map cont
-            }
+            } |> ResultT
         | Games(_, cont) ->
             async {
                 let! games = readModelsActor.PostAndAsyncReply(fun rc -> GameList(rc)) 
                 return games |> cont |> Ok
-            }
+            } |> ResultT
