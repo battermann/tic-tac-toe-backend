@@ -1,22 +1,20 @@
 #load "TicTacToe.Interpreters.fsx"
 #load "Hypermedia.fsx"
-#r "nuget: Suave,2.5.4"
+#r "nuget: Microsoft.AspNetCore"
+#r "nuget: Microsoft.AspNetCore.Http"
 
 open System
 open System.Net
+open System.IO
+open System.Threading.Tasks
 
+open FSharpPlus
 open FSharpPlus.Data
 open FSharp.Data
 
-open Suave.Web
-open Suave.Successful
-open Suave.Operators
-open Suave.Http
-open Suave.ServerErrors
-open System.IO
-open Suave
-open Suave.Filters
-open Suave.RequestErrors
+open Microsoft.AspNetCore.Http
+open Microsoft.AspNetCore.Builder
+open Microsoft.AspNetCore.Hosting
 
 open Hypermedia
 open Hal
@@ -25,6 +23,88 @@ open TicTacToe
 open TicTacToe.Core
 open Instructions
 open Interpreters
+
+module [<AutoOpen>] WebServer =
+
+    type WebPart<'a> = 'a -> OptionT<Async<option<'a>>>
+
+    module HttpAdapter =
+        let appMap (path: string) (map: IApplicationBuilder -> unit) (app: IApplicationBuilder) : IApplicationBuilder =
+            app.Map (PathString path, Action<_> map)
+
+    type HeaderKey (key: string) =
+        let lower = key.ToLowerInvariant ()
+        member _.ToLowerInvariant () = lower
+        override _.ToString () = key
+        override _.GetHashCode () = hash lower
+        override this.Equals (obj: obj) = match obj with | :? HeaderKey as k -> this.ToLowerInvariant().Equals (k.ToLowerInvariant ()) | _ -> false
+        interface IComparable with
+            member this.CompareTo otherObject =
+                let other = otherObject :?> HeaderKey
+                this.ToLowerInvariant().CompareTo(other.ToLowerInvariant ())
+    
+    module WebPart =
+        let inline fail (_: 'a) : OptionT<Async<option<'a>>> = OptionT <| async.Return None
+
+    module [<AutoOpen>] Http =
+        type Response = {
+            statusCode:  int option
+            content:     string option
+            contentType: string option
+            headers:     Map<HeaderKey, string>
+        }
+
+        type Context = { request:HttpRequest; response:Response }
+        module Response =
+            let empty = { statusCode=None; content=None; contentType=None ; headers=Map.empty}
+        module Context =
+            let ofHttpContext (httpContext: HttpContext) =
+                { request = httpContext.Request; response = Response.empty }
+        let yieldToResponse (from: Response) (to': HttpResponse) =
+            match from.contentType with Some contentType -> to'.ContentType <- contentType | _ -> ()
+            match from.statusCode  with Some statusCode  -> to'.StatusCode  <- statusCode  | _ -> ()
+            match from.content     with Some content -> to'.WriteAsync content | _ -> Task.CompletedTask
+
+    module [<AutoOpen>] Writers =
+        let private succeed x = async.Return (Some x)
+        let setStatusAndContent statusCode content =
+            OptionT << fun ctx -> { ctx with response = { ctx.response with statusCode = Some statusCode; content = Some content } } |> succeed
+        
+        let setHeader key value =
+            OptionT << fun ctx -> { ctx with response = { ctx.response with headers = Map.add (HeaderKey key) value ctx.response.headers }} |> succeed
+
+    let OK             s = setStatusAndContent (int HttpStatusCode.OK) s
+    let ACCEPTED       s = setStatusAndContent (int HttpStatusCode.Accepted) s
+    let BAD_REQUEST    s = setStatusAndContent (int HttpStatusCode.BadRequest) s 
+    let INTERNAL_ERROR s = setStatusAndContent (int HttpStatusCode.InternalServerError) s
+    let NOT_FOUND      s = setStatusAndContent (int HttpStatusCode.NotFound) s
+    let CONFLICT       s = setStatusAndContent (int HttpStatusCode.Conflict) s
+    
+    let response (method: string) = OptionT << fun (x : Context) -> async.Return (if (method = x.request.Method) then Some x else None)
+
+    let GET  (x: Http.Context) = response "GET" x
+    let POST (x: Http.Context) = response "POST" x
+    let path s = let path = implicit s in OptionT << fun (x: Http.Context) -> async.Return (if path = x.request.Path then Some x else None)
+
+    let inline pathScan path routeHandler : WebPart<Context> = fun (x: Http.Context) ->
+        match string x.request.Path |> trySscanf path with
+        | Some p -> routeHandler p x
+        | _      -> WebPart.fail x
+
+    let appRun (app: WebPart<Context>) (appBuilder: IApplicationBuilder) =
+        let appRun (func: HttpContext -> #Task) (b: IApplicationBuilder) =
+            b.Run (RequestDelegate (fun ctx -> func ctx :> Task))
+        
+        let runApp context = task {
+            let ctx = Context.ofHttpContext context
+            match! app ctx |> OptionT.run |> Async.StartAsTask with
+            | Some res -> return! Http.yieldToResponse res.response context.Response
+            | None     -> return! Task.CompletedTask
+        }
+        appRun runApp appBuilder
+
+    let request apply : WebPart<Http.Context> = fun ctx -> apply ctx.request ctx
+
 
 let (!!) x = Path.Combine (__SOURCE_DIRECTORY__, x)
 let (</>) path1 path2 = Path.Combine(path1, path2).Replace('\\','/')
@@ -149,10 +229,9 @@ module Mappers =
 
 [<AutoOpen>]
 module Deserialization =
-    let getPlay (req : HttpRequest) =
-        let getString (rawForm:byte array) = Text.Encoding.UTF8.GetString(rawForm)
-        req.rawForm
-        |> getString
+    let getPlay (req: HttpRequest) =
+        let rawRequestBody = (new IO.StreamReader (req.Body)).ReadToEnd ()
+        rawRequestBody        
         |> JsonValue.Parse
         |> Play.FromJson
         
@@ -164,42 +243,38 @@ let bothPlayersJoined (playerMap: Actor<PlayerMapMessage>) gameId =
         | _ -> return false
     }
 
-let game interpret (playerMap: Actor<PlayerMapMessage>) (id: string) baseUrl: WebPart =
-    let gameId = Guid(id) |> GameId
-    fun (ctx: HttpContext) ->
-        async {
-            let! rm = interpret (Queries.game(gameId)) |> ResultT.run
-            let! closedForJoin = bothPlayersJoined playerMap gameId
-            return! 
+let game (interpret: Free<_, _> -> Effect<_>) (playerMap: Actor<PlayerMapMessage>) (id: string) baseUrl: WebPart<_> =
+    let gameId = Guid id |> GameId
+    fun (ctx: Http.Context) ->
+        monad {
+            let! rm = interpret (Queries.game gameId) |> ResultT.run |> OptionT.lift
+            let! closedForJoin = bothPlayersJoined playerMap gameId |> OptionT.lift
+            return!
                 match rm with
-                | Ok v -> 
-                    OK (v |> toGameResponse baseUrl closedForJoin |> FSharpDataIntepreter.Hal.toJson |> jsonToString) ctx
-                | Error errs -> 
-                    INTERNAL_ERROR ({ error = errs } |> (Error.ToJson >> jsonToString)) ctx
+                | Ok v    -> OK (v |> toGameResponse baseUrl closedForJoin |> FSharpDataIntepreter.Hal.toJson |> jsonToString) ctx
+                | Error e -> INTERNAL_ERROR ({ error = e } |> (Error.ToJson >> jsonToString)) ctx
         }
 
-let gamesWithJoinableFlag (interpret: Free<_,_> -> Effect<_>) (playerMap: Actor<PlayerMapMessage>) =
-        FSharpPlus.GenericBuilders.monad {
-            let! games = interpret (Queries.games) 
-            let! gamesWithFlag = 
-                games |> List.map (fun (g: Dsls.ReadModel.GameListItemRm) -> bothPlayersJoined playerMap (Guid(g.id) |> GameId) |> Async.map (fun b -> g,b))
+let gamesWithJoinableFlag (interpret: Free<_, _> -> Effect<_>) (playerMap: Actor<PlayerMapMessage>) =
+        monad {
+            let! games = interpret Queries.games
+            let! gamesWithFlag =
+                games |> List.map (fun (g: Dsls.ReadModel.GameListItemRm) -> bothPlayersJoined playerMap (Guid g.id |> GameId) |> Async.map (fun b -> g, b))
                 |> Async.Parallel |> ResultT.lift
             return gamesWithFlag |> Array.toList
         }
 
-let games interpret (playerMap: Actor<PlayerMapMessage>) baseUrl: WebPart =
-    fun (ctx: HttpContext) ->
-        async {
-            let! rmWithJoinableFlag = gamesWithJoinableFlag interpret playerMap |> ResultT.run
-            return! 
+let games interpret (playerMap: Actor<PlayerMapMessage>) baseUrl : WebPart<_> =
+    fun (ctx: Http.Context) ->
+        monad {
+            let! rmWithJoinableFlag = gamesWithJoinableFlag interpret playerMap |> ResultT.run |> OptionT.lift
+            return!
                 match rmWithJoinableFlag with
-                | Ok v -> 
-                    OK (v |> toGameList baseUrl |> FSharpDataIntepreter.Hal.toJson |> jsonToString) ctx
-                | Error errs ->
-                    INTERNAL_ERROR ({ error = errs } |> Error.ToJson |> jsonToString) ctx
+                | Ok v    -> OK (v |> toGameList baseUrl |> FSharpDataIntepreter.Hal.toJson |> jsonToString) ctx
+                | Error e -> INTERNAL_ERROR ({ error = e } |> Error.ToJson |> jsonToString) ctx
         }
 
-let start interpret (playerMap: Actor<PlayerMapMessage>) baseUrl: WebPart =
+let start interpret (playerMap: Actor<PlayerMapMessage>) baseUrl: WebPart<_> =
     let gameId = Guid.NewGuid()
     let playerId = Guid.NewGuid()
     do playerMap.Post(Add(GameId gameId, { x = PlayerId playerId |> Some; o = None }))
@@ -208,27 +283,26 @@ let start interpret (playerMap: Actor<PlayerMapMessage>) baseUrl: WebPart =
     let body = { playerId = playerId.ToString() } |> Player.ToJson |> jsonToString
     ACCEPTED body >=> Writers.setHeader "Location" (baseUrl </> Paths.game (gameId.ToString()))
 
-let join (playerMap: Actor<PlayerMapMessage>) (gameId: string) baseUrl: WebPart =
-    let playerId = Guid.NewGuid()
-    fun (ctx: HttpContext) ->
-        async {
-            let! result = playerMap.PostAndAsyncReply(fun rc -> TryJoin (Guid(gameId) |> GameId, playerId |> PlayerId, rc))
-            match result with
-            | Ok _ ->
-                let body = { playerId = playerId.ToString() } |> Player.ToJson |> jsonToString
-                return! (ACCEPTED body >=> Writers.setHeader "Location" (baseUrl </> Paths.game (gameId.ToString()))) ctx
-            | Error err ->
-                return!
+let join (playerMap: Actor<PlayerMapMessage>) (gameId: string) baseUrl : WebPart<_> =
+    let playerId = Guid.NewGuid ()
+    fun (ctx: Http.Context) ->
+        monad {
+            let! result = playerMap.PostAndAsyncReply (fun rc -> TryJoin (Guid gameId |> GameId, playerId |> PlayerId, rc)) |> OptionT.lift
+            return!
+                match result with
+                | Ok _ ->
+                    let body = { playerId = string playerId } |> Player.ToJson |> jsonToString
+                    (ACCEPTED body >=> Writers.setHeader "Location" (baseUrl </> Paths.game (string gameId))) ctx
+                | Error err ->
                     if err = "game already running" then
                         CONFLICT ({ error = err } |> Error.ToJson |> jsonToString) ctx
                     elif err = "game invalid" then
                         NOT_FOUND ({ error = err } |> Error.ToJson |> jsonToString) ctx
                     else 
                         INTERNAL_ERROR ({ error = err } |> Error.ToJson |> jsonToString) ctx
-                        
         }
 
-let play interpret (playerMap: Actor<PlayerMapMessage>) (id: string) (play:Play) baseUrl: WebPart =
+let play interpret (playerMap: Actor<PlayerMapMessage>) (id: string) (play:Play) baseUrl: WebPart<_> =
     let toPosition (v: string, h: string) =
         match (v.ToLower(),h.ToLower()) with
         | "top", "left" -> (Top, Left) |> Some
@@ -243,17 +317,18 @@ let play interpret (playerMap: Actor<PlayerMapMessage>) (id: string) (play:Play)
         | _ -> None
     
     let maybePosition = toPosition (play.vertical, play.horizontal)
-    let gameId = Guid(id) |> GameId
-    fun (ctx: HttpContext) ->
-        async {
-            let! players = playerMap.PostAndAsyncReply(fun rc -> TryFind (gameId, rc))
-            let! closedForJoin = bothPlayersJoined playerMap gameId
+    let gameId = Guid id |> GameId
+    fun (ctx: Http.Context) ->
+        monad {
+            let! players = playerMap.PostAndAsyncReply (fun rc -> TryFind (gameId, rc)) |> OptionT.lift
+            let! closedForJoin = bothPlayersJoined playerMap gameId |> OptionT.lift
             match players, maybePosition, closedForJoin with
             | Some { x = Some plX; o = Some plO }, Some(v,h), true ->
-                let cmd = if (Guid(play.playerId) |> PlayerId) = plX then PlayX else PlayO
+                let cmd = if Guid play.playerId |> PlayerId = plX then PlayX else PlayO
                 // handle cmd asyncronously
                 do interpret (Commands.handle(gameId, cmd (v, h))) |> ResultT.run |> Async.map ignore |> Async.Start
-                return! (ACCEPTED "{}" >=> Writers.setHeader "Location" (baseUrl </> Paths.game (gameId.ToString()))) ctx
+                return!
+                    (ACCEPTED "{}" >=> Writers.setHeader "Location" (baseUrl </> Paths.game (gameId.ToString()))) ctx
             | Some _, Some _, false -> return! CONFLICT ({ error = "opponent hasn't joined game yet" } |> Error.ToJson |> jsonToString) ctx
             | _, None, _            -> return! BAD_REQUEST ({ error = "unknown position" } |> Error.ToJson |> jsonToString) ctx
             | _                     -> return! NOT_FOUND ({ error = "unknown player id" } |> Error.ToJson |> jsonToString) ctx
@@ -289,12 +364,14 @@ let interpret = TicTacToe.interpret
 let app =
     let urlWithHost (request : HttpRequest) = 
         let host = 
-            request.headers
-            |> List.find (fst >> (=) "host")
+            request.Headers
+            |> Seq.find (fun (KeyValue (k, _)) -> String.toLower k = "host")
+            |> (|KeyValue|)
             |> snd
-        sprintf "%s://%s" request.url.Scheme host
+            |> string
+        sprintf "%s://%s" request.Scheme host
     
-    let setJsonHeader = Writers.setMimeType "application/hal+json"
+    let setJsonHeader = Writers.setHeader "Content-Type" "application/hal+json"
 
     let setCorsHaeders = 
         Writers.setHeader "Access-Control-Allow-Origin" "*" 
@@ -304,22 +381,22 @@ let app =
 
     let setHeaders = setJsonHeader >=> setCorsHaeders
 
-    choose [ 
-        GET >=> choose [
+    choice [
+        GET >=> choice [
             path ("/" </> Paths.api) >=> request (urlWithHost >> fun host ->
                 { Resource.empty with links = Map.ofList [ "self", Singleton (Link.create (Uri (host </> Paths.api)))
                                                            gamesRel host, Singleton (Link.create (Uri (host </> Paths.games)))  ] }
-                |> FSharpDataIntepreter.Hal.toJson|> jsonToString |> OK) 
+                |> FSharpDataIntepreter.Hal.toJson |> jsonToString |> OK)
                 >=> setHeaders
             path ("/" </> Paths.games) >=> request (urlWithHost >> games interpret playersMapActor) >=> setHeaders
             pathScan Routes.game (fun gameId ->
                 request (urlWithHost >> game interpret playersMapActor gameId)) >=> setHeaders
-            path ("/" </> Paths.rels GAMES) >=> Files.file !!"../public/rels/games.html" >=> setCorsHaeders
-            path ("/" </> Paths.rels NEWGAME) >=> Files.file !!"../public/rels/newgame.html" >=> setCorsHaeders
-            path ("/" </> Paths.rels JOIN) >=> Files.file !!"../public/rels/join.html" >=> setCorsHaeders            
-            path ("/" </> Paths.rels PLAY) >=> Files.file !!"../public/rels/play.html" >=> setCorsHaeders
+            path ("/" </> Paths.rels GAMES) >=> OK (File.ReadAllText !!"../public/rels/games.html") >=> setCorsHaeders
+            path ("/" </> Paths.rels NEWGAME) >=> OK (File.ReadAllText !!"../public/rels/newgame.html") >=> setCorsHaeders
+            path ("/" </> Paths.rels JOIN) >=> OK (File.ReadAllText !!"../public/rels/join.html") >=> setCorsHaeders            
+            path ("/" </> Paths.rels PLAY) >=> OK (File.ReadAllText !!"../public/rels/play.html") >=> setCorsHaeders
         ]
-        POST >=> choose [
+        POST >=> choice [
             path ("/" </> Paths.games) >=> request (urlWithHost >> start interpret playersMapActor) >=> setHeaders
             pathScan Routes.join (fun gameId ->
                 request (urlWithHost >> join playersMapActor gameId)) >=> setHeaders
@@ -330,27 +407,20 @@ let app =
     ]
 
 
-open Suave.Logging
-
-let private createLogger () =
-    let target = LiterateConsoleTarget (
-                        name = [|"BackEnd"|],
-                        minLevel = LogLevel.Verbose,
-                        options = Literate.LiterateOptions.create()
-                        )
-    let logger = target :> Logger 
-    logger
-
 let config =
-    let ip = IPAddress.Parse "0.0.0.0"
+    let ip = "0.0.0.0"
     let port =
         match fsi.CommandLineArgs with
         | [|_; port|] -> port
         | _           -> "8080"
-    { defaultConfig with
-        logger = createLogger ()
-        bindings= [ HttpBinding.create HTTP ip (uint16 port) ] }
+    ip + ":" + string port
 
-interpret (ReadModel.subscribe())
+let buildWebHost args =
+    Microsoft.AspNetCore.WebHost.CreateDefaultBuilder(args)
+        .Configure(fun (b: IApplicationBuilder) -> HttpAdapter.appMap "" (appRun app) b |> ignore)
+        .UseUrls($"http://{config}/")
+        .Build ()
 
-startWebServer config app
+interpret (ReadModel.subscribe ())
+
+buildWebHost([||]).Run ()

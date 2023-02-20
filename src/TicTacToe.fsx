@@ -1,6 +1,6 @@
 module TicTacToe.Core
 
-#r "nuget: FSharpPlus,1.3.3"
+#r "nuget: FSharpPlus,1.4.0"
 
 open System
 open FSharpPlus
