@@ -26,7 +26,7 @@ open Interpreters
 
 module [<AutoOpen>] WebServer =
 
-    type WebPart<'a> = 'a -> OptionT<Async<option<'a>>>
+    type WebPart<'a> = 'a -> ResultT<Async<Result<'a, unit>>>
 
     module HttpAdapter =
         let appMap (path: string) (map: IApplicationBuilder -> unit) (app: IApplicationBuilder) : IApplicationBuilder =
@@ -44,7 +44,7 @@ module [<AutoOpen>] WebServer =
                 this.ToLowerInvariant().CompareTo(other.ToLowerInvariant ())
     
     module WebPart =
-        let inline fail (_: 'a) : OptionT<Async<option<'a>>> = OptionT <| async.Return None
+        let inline fail (_: 'a) : ResultT<Async<Result<'a, unit>>> = ResultT <| async.Return (Error ())
 
     module [<AutoOpen>] Http =
         type Response = {
@@ -66,12 +66,12 @@ module [<AutoOpen>] WebServer =
             match from.content     with Some content -> to'.WriteAsync content | _ -> Task.CompletedTask
 
     module [<AutoOpen>] Writers =
-        let private succeed x = async.Return (Some x)
+        let private succeed x = async.Return (Ok x)
         let setStatusAndContent statusCode content =
-            OptionT << fun ctx -> { ctx with response = { ctx.response with statusCode = Some statusCode; content = Some content } } |> succeed
+            ResultT << fun ctx -> { ctx with response = { ctx.response with statusCode = Some statusCode; content = Some content } } |> succeed
         
         let setHeader key value =
-            OptionT << fun ctx -> { ctx with response = { ctx.response with headers = Map.add (HeaderKey key) value ctx.response.headers }} |> succeed
+            ResultT << fun ctx -> { ctx with response = { ctx.response with headers = Map.add (HeaderKey key) value ctx.response.headers }} |> succeed
 
     let OK             s = setStatusAndContent (int HttpStatusCode.OK) s
     let ACCEPTED       s = setStatusAndContent (int HttpStatusCode.Accepted) s
@@ -80,11 +80,11 @@ module [<AutoOpen>] WebServer =
     let NOT_FOUND      s = setStatusAndContent (int HttpStatusCode.NotFound) s
     let CONFLICT       s = setStatusAndContent (int HttpStatusCode.Conflict) s
     
-    let response (method: string) = OptionT << fun (x : Context) -> async.Return (if (method = x.request.Method) then Some x else None)
+    let response (method: string) = ResultT << fun (x : Context) -> async.Return (if (method = x.request.Method) then Ok x else Error ())
 
     let GET  (x: Http.Context) = response "GET" x
     let POST (x: Http.Context) = response "POST" x
-    let path s = let path = implicit s in OptionT << fun (x: Http.Context) -> async.Return (if path = x.request.Path then Some x else None)
+    let path s = let path = implicit s in ResultT << fun (x: Http.Context) -> async.Return (if path = x.request.Path then Ok x else Error ())
 
     let inline pathScan path routeHandler : WebPart<Context> = fun (x: Http.Context) ->
         match string x.request.Path |> trySscanf path with
@@ -97,9 +97,9 @@ module [<AutoOpen>] WebServer =
         
         let runApp context = task {
             let ctx = Context.ofHttpContext context
-            match! app ctx |> OptionT.run |> Async.StartAsTask with
-            | Some res -> return! Http.yieldToResponse res.response context.Response
-            | None     -> return! Task.CompletedTask
+            match! app ctx |> ResultT.run |> Async.StartAsTask with
+            | Ok res   -> return! Http.yieldToResponse res.response context.Response
+            | Error () -> return! Task.CompletedTask
         }
         appRun runApp appBuilder
 
@@ -247,13 +247,10 @@ let game (interpret: Free<_, _> -> Effect<_>) (playerMap: Actor<PlayerMapMessage
     let gameId = Guid id |> GameId
     fun (ctx: Http.Context) ->
         monad {
-            let! rm = interpret (Queries.game gameId) |> ResultT.run |> OptionT.lift
-            let! closedForJoin = bothPlayersJoined playerMap gameId |> OptionT.lift
-            return!
-                match rm with
-                | Ok v    -> OK (v |> toGameResponse baseUrl closedForJoin |> FSharpDataIntepreter.Hal.toJson |> jsonToString) ctx
-                | Error e -> INTERNAL_ERROR ({ error = e } |> (Error.ToJson >> jsonToString)) ctx
-        }
+            let! rm = interpret (Queries.game gameId)
+            let! closedForJoin = bothPlayersJoined playerMap gameId |> ResultT.lift
+            return! OK (rm |> toGameResponse baseUrl closedForJoin |> FSharpDataIntepreter.Hal.toJson |> jsonToString) ctx }
+        </catch/> fun e -> INTERNAL_ERROR ({ error = e } |> (Error.ToJson >> jsonToString)) ctx
 
 let gamesWithJoinableFlag (interpret: Free<_, _> -> Effect<_>) (playerMap: Actor<PlayerMapMessage>) =
         monad {
@@ -267,12 +264,10 @@ let gamesWithJoinableFlag (interpret: Free<_, _> -> Effect<_>) (playerMap: Actor
 let games interpret (playerMap: Actor<PlayerMapMessage>) baseUrl : WebPart<_> =
     fun (ctx: Http.Context) ->
         monad {
-            let! rmWithJoinableFlag = gamesWithJoinableFlag interpret playerMap |> ResultT.run |> OptionT.lift
-            return!
-                match rmWithJoinableFlag with
-                | Ok v    -> OK (v |> toGameList baseUrl |> FSharpDataIntepreter.Hal.toJson |> jsonToString) ctx
-                | Error e -> INTERNAL_ERROR ({ error = e } |> Error.ToJson |> jsonToString) ctx
+            let! rmWithJoinableFlag = gamesWithJoinableFlag interpret playerMap
+            return! OK (rmWithJoinableFlag |> toGameList baseUrl |> FSharpDataIntepreter.Hal.toJson |> jsonToString) ctx
         }
+        </catch/> fun e -> INTERNAL_ERROR ({ error = e } |> Error.ToJson |> jsonToString) ctx
 
 let start interpret (playerMap: Actor<PlayerMapMessage>) baseUrl: WebPart<_> =
     let gameId = Guid.NewGuid()
@@ -287,20 +282,18 @@ let join (playerMap: Actor<PlayerMapMessage>) (gameId: string) baseUrl : WebPart
     let playerId = Guid.NewGuid ()
     fun (ctx: Http.Context) ->
         monad {
-            let! result = playerMap.PostAndAsyncReply (fun rc -> TryJoin (Guid gameId |> GameId, playerId |> PlayerId, rc)) |> OptionT.lift
+            do! playerMap.PostAndAsyncReply (fun rc -> TryJoin (Guid gameId |> GameId, playerId |> PlayerId, rc)) |> ResultT
+            let body = { playerId = string playerId } |> Player.ToJson |> jsonToString
             return!
-                match result with
-                | Ok _ ->
-                    let body = { playerId = string playerId } |> Player.ToJson |> jsonToString
-                    (ACCEPTED body >=> Writers.setHeader "Location" (baseUrl </> Paths.game (string gameId))) ctx
-                | Error err ->
-                    if err = "game already running" then
-                        CONFLICT ({ error = err } |> Error.ToJson |> jsonToString) ctx
-                    elif err = "game invalid" then
-                        NOT_FOUND ({ error = err } |> Error.ToJson |> jsonToString) ctx
-                    else 
-                        INTERNAL_ERROR ({ error = err } |> Error.ToJson |> jsonToString) ctx
+                (ACCEPTED body >=> Writers.setHeader "Location" (baseUrl </> Paths.game (string gameId))) ctx
         }
+        </catch/> fun err ->
+            if err = "game already running" then
+                CONFLICT ({ error = err } |> Error.ToJson |> jsonToString) ctx
+            elif err = "game invalid" then
+                NOT_FOUND ({ error = err } |> Error.ToJson |> jsonToString) ctx
+            else 
+                INTERNAL_ERROR ({ error = err } |> Error.ToJson |> jsonToString) ctx
 
 let play interpret (playerMap: Actor<PlayerMapMessage>) (id: string) (play:Play) baseUrl: WebPart<_> =
     let toPosition (v: string, h: string) =
@@ -320,8 +313,8 @@ let play interpret (playerMap: Actor<PlayerMapMessage>) (id: string) (play:Play)
     let gameId = Guid id |> GameId
     fun (ctx: Http.Context) ->
         monad {
-            let! players = playerMap.PostAndAsyncReply (fun rc -> TryFind (gameId, rc)) |> OptionT.lift
-            let! closedForJoin = bothPlayersJoined playerMap gameId |> OptionT.lift
+            let! players = playerMap.PostAndAsyncReply (fun rc -> TryFind (gameId, rc)) |> ResultT.lift
+            let! closedForJoin = bothPlayersJoined playerMap gameId |> ResultT.lift
             match players, maybePosition, closedForJoin with
             | Some { x = Some plX; o = Some plO }, Some(v,h), true ->
                 let cmd = if Guid play.playerId |> PlayerId = plX then PlayX else PlayO
