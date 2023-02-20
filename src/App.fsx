@@ -5,6 +5,7 @@
 open System
 open System.Net
 
+open FSharpPlus.Data
 open FSharp.Data
 
 open Suave.Web
@@ -19,14 +20,11 @@ open Suave.RequestErrors
 
 open Hypermedia
 open Hal
-open FSharpDataIntepreter
 
 open TicTacToe
 open TicTacToe.Core
-open FSharpPlus.Data
 open Instructions
 open Interpreters
-open Effects
 
 let (!!) x = Path.Combine (__SOURCE_DIRECTORY__, x)
 let (</>) path1 path2 = Path.Combine(path1, path2).Replace('\\','/')
@@ -181,7 +179,7 @@ let game interpret (playerMap: Actor<PlayerMapMessage>) (id: string) baseUrl: We
         }
 
 let gamesWithJoinableFlag (interpret: Free<_,_> -> Effect<_>) (playerMap: Actor<PlayerMapMessage>) =
-        effects {
+        FSharpPlus.GenericBuilders.monad {
             let! games = interpret (Queries.games) 
             let! gamesWithFlag = 
                 games |> List.map (fun (g: Dsls.ReadModel.GameListItemRm) -> bothPlayersJoined playerMap (Guid(g.id) |> GameId) |> Async.map (fun b -> g,b))
