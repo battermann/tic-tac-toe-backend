@@ -1,12 +1,12 @@
-module TicTacToe
+module TicTacToe.Core
 
-#r "../packages/Chessie/lib/net40/Chessie.dll"
+#r "nuget: FSharpPlus,1.4.0"
 
 open System
+open FSharpPlus
 
 [<AutoOpen>]
 module Types =
-    open Chessie.ErrorHandling
 
     type GameId = GameId of Guid
 
@@ -36,8 +36,6 @@ module Types =
     type Version = Version of int
     type State = Version * Game
 
-    type Error = String
-
     type Command = 
     | Start
     | PlayX of Position
@@ -55,7 +53,6 @@ module Types =
 
 
 module Domain =
-    open Chessie.ErrorHandling
     let private hLines = [
         [(Top, Left); (Top, HCenter); (Top, Right)]
         [(VCenter, Left); (VCenter, HCenter); (VCenter, Right)]
@@ -79,9 +76,9 @@ module Domain =
 
     let private placeMarker grid player (v, h) =
         if grid |> List.exists (equals (v, h)) then
-            fail "square already marked"
+            Error "square already marked"
         else
-            ok ((v, h, marker player) :: grid, player, v, h)
+            Ok ((v, h, marker player) :: grid, player, v, h)
 
     let private getMarker (grid: Grid) pos =
         let square = grid |> List.tryFind (equals pos)
@@ -108,36 +105,36 @@ module Domain =
         | _, PlayerO when grid |> List.length < 9 -> PlayerXToPlay grid
         | _ -> Tie grid    
 
-    let replay (events: Event list) : Result<State, Error> = 
+    let replay (events: Event list) : Result<State, string> = 
 
-        let replayError errs = errs |> List.map (fun err -> sprintf "replay error, %s" err)
+        let replayError err = sprintf "replay error, %s" err
 
-        let apply state event: Result<Game, Error> =
+        let apply state event: Result<Game, string> =
             match state, event with
             | Initial, Started -> 
-                PlayerXToPlay [] |> ok
+                PlayerXToPlay [] |> Ok
             | PlayerXToPlay grid, PlayerXPlayed pos -> 
-                placeMarker grid PlayerX pos |> Trial.lift eval |> Trial.mapFailure replayError
+                placeMarker grid PlayerX pos |> Result.map eval |> Result.mapError replayError
             | PlayerOToPlay grid, PlayerOPlayed pos -> 
-                placeMarker grid PlayerO pos |> Trial.lift eval |> Trial.mapFailure replayError
+                placeMarker grid PlayerO pos |> Result.map eval |> Result.mapError replayError
             | PlayerXToPlay grid, _ -> 
-                fail "replay error, wrong turn"
-            | PlayerOToPlay grid, _ -> fail "replay error, wrong turn"
+                Error "replay error, wrong turn"
+            | PlayerOToPlay grid, _ -> Error "replay error, wrong turn"
             | _ -> 
-                fail "replay error, game is finished"
+                Error "replay error, game is finished"
 
         let folder errorOrState event = 
-            trial {
+            monad {
                 let! (Version v, s) = errorOrState
                 let! game = apply s event
                 return v + 1 |> Version, game
             }
 
-        events |> List.fold folder (ok (Version -1, Initial))
+        events |> List.fold folder (Ok (Version -1, Initial))
 
-    let handle (version: Version, game: Game) (cmd: Command): Result<Version * Event list, Error> =
+    let handle (version: Version, game: Game) (cmd: Command): Result<Version * Event list, string> =
         let xToPlayAndXPlays grid pos = 
-            trial {
+            monad {
                 let! state = placeMarker grid PlayerX pos
                 let evaluatedState = eval state
                 let events = 
@@ -149,7 +146,7 @@ module Domain =
             }   
 
         let oToPlayAndOPlays grid pos = 
-            trial {
+            monad {
                 let! state = placeMarker grid PlayerO pos
                 let evaluatedState = eval state
                 let events = 
@@ -163,14 +160,14 @@ module Domain =
 
         match game, cmd with
         | Initial, Start -> 
-            ok (version, [Started])
+            Ok (version, [Started])
         | PlayerXToPlay grid, PlayX pos ->
             xToPlayAndXPlays grid pos
         | PlayerOToPlay grid, PlayO pos -> 
             oToPlayAndOPlays grid pos
         | PlayerXToPlay grid, PlayO _ -> 
-            fail "not your turn"
+            Error "not your turn"
         | PlayerOToPlay grid, PlayX _ -> 
-            fail "not your turn"
-        | _ -> fail "game is finished"
+            Error "not your turn"
+        | _ -> Error "game is finished"
             
